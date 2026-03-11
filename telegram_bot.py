@@ -95,12 +95,25 @@ async def get_last_match_id(session: aiohttp.ClientSession, steam_id: str) -> st
     return None
 
 async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> dict | None:
+    # Сначала пробуем Steam API (быстрее, не требует парсинга)
+    try:
+        url = f"https://api.steampowered.com/IDOTA2Match_570/GetMatchDetails/v1/?key={STEAM_API_KEY}&match_id={match_id}"
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            data = await r.json()
+            result = data.get("result", {})
+            if result.get("match_id"):
+                logger.info(f"Got match {match_id} from Steam API")
+                return result
+    except Exception as e:
+        logger.warning(f"Steam get_match_details error: {e}")
+    # Фолбек на OpenDota
     try:
         async with session.get(f"https://api.opendota.com/api/matches/{match_id}", timeout=aiohttp.ClientTimeout(total=15)) as r:
             if r.status == 200:
+                logger.info(f"Got match {match_id} from OpenDota")
                 return await r.json()
     except Exception as e:
-        logger.warning(f"get_match_details error: {e}")
+        logger.warning(f"OpenDota get_match_details error: {e}")
     return None
 
 def format_match_message(match: dict, our_steam_ids: set[str]) -> str:
@@ -194,8 +207,8 @@ async def monitor_matches(app):
 
                 logger.info(f"Match {mid}: found {len(our_in_match)} of our players")
 
-                if len(our_in_match) < 4:
-                    logger.info(f"Only {len(our_in_match)} players, skipping (need 4+)")
+                if len(our_in_match) < 2:
+                    logger.info(f"Only {len(our_in_match)} players, skipping (need 2+)")
                     continue
 
                 msg = format_match_message(match, our_in_match)
