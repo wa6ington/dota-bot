@@ -89,10 +89,28 @@ async def get_last_match_id(session: aiohttp.ClientSession, steam_id: str) -> st
             data = await r.json()
             matches = data.get("result", {}).get("matches", [])
             if matches:
-                return str(matches[0]["match_id"])
+                return str(matches[0]["match_id"]), matches[0].get("players", [])
     except Exception as e:
         logger.warning(f"get_last_match_id error: {e}")
-    return None
+    return None, []
+
+async def get_match_history_players(session: aiohttp.ClientSession, steam_id: str, match_id: str) -> list:
+    """Получить список игроков матча из GetMatchHistory (hero_id есть, K/D нет)"""
+    try:
+        account_id = int(steam_id) - 76561197960265728
+        url = (
+            f"https://api.steampowered.com/IDOTA2Match_570/GetMatchHistory/v1/"
+            f"?key={STEAM_API_KEY}&account_id={account_id}&matches_requested=10"
+        )
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            data = await r.json()
+            matches = data.get("result", {}).get("matches", [])
+            for m in matches:
+                if str(m["match_id"]) == str(match_id):
+                    return m.get("players", [])
+    except Exception as e:
+        logger.warning(f"get_match_history_players error: {e}")
+    return []
 
 async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> dict | None:
     # Сначала пробуем Steam API (быстрее, не требует парсинга)
@@ -116,30 +134,65 @@ async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> di
         logger.warning(f"OpenDota get_match_details error: {e}")
     return None
 
-def format_match_message(match: dict, our_steam_ids: set[str]) -> str:
+def format_match_message(match: dict, our_steam_ids: set[str], history_players: list = None) -> str:
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
     duration_sec = match.get("duration", 0) % 60
     radiant_win  = match.get("radiant_win", False)
     steam_to_tg  = {v: k for k, v in PLAYERS.items()}
 
-    our_players = []
-    for p in players_data:
-        steam64 = str(p.get("account_id", 0) + 76561197960265728)
-        if steam64 not in our_steam_ids:
-            continue
-        tg_name   = steam_to_tg.get(steam64, steam64)
-        hero      = HERO_NAMES.get(p.get("hero_id", 0), f"Hero#{p.get('hero_id',0)}")
-        kills     = p.get("kills", 0)
-        deaths    = p.get("deaths", 0)
-        assists   = p.get("assists", 0)
-        is_radiant = p.get("player_slot", 0) < 128
-        our_players.append({"tg": tg_name, "hero": hero, "kda": f"{kills}/{deaths}/{assists}", "is_radiant": is_radiant})
+    # Строим словарь hero_id по account_id из истории (для приватных игроков)
+    history_hero = {}
+    if history_players:
+        for p in history_players:
+            history_hero[p.get("account_id")] = p.get("hero_id", 0)
 
-    if not our_players:
+    radiant = []
+    dire    = []
+
+    for p in players_data:
+        account_id = p.get("account_id", 0)
+        steam64    = str(account_id + 76561197960265728)
+        slot       = p.get("player_slot", 0)
+        is_radiant = slot < 128
+        hero_id    = p.get("hero_id") or history_hero.get(account_id, 0)
+        hero       = HERO_NAMES.get(hero_id, f"Hero#{hero_id}")
+
+        if steam64 in our_steam_ids and account_id != 4294967295:
+            # Знаем кто это — показываем с K/D/A
+            tg_name = steam_to_tg.get(steam64, "?")
+            kills   = p.get("kills", 0)
+            deaths  = p.get("deaths", 0)
+            assists = p.get("assists", 0)
+            entry   = f"  @{tg_name} — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+        elif account_id != 4294967295:
+            # Знаем account_id но не наш — может быть наш с приватным профилем
+            tg_name = steam_to_tg.get(steam64, None)
+            if tg_name:
+                kills   = p.get("kills", 0)
+                deaths  = p.get("deaths", 0)
+                assists = p.get("assists", 0)
+                entry   = f"  @{tg_name} — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+            else:
+                entry = f"  ? — <b>{hero}</b>"
+        else:
+            # Приватный — только герой
+            entry = f"  ? — <b>{hero}</b>"
+
+        if is_radiant:
+            radiant.append(entry)
+        else:
+            dire.append(entry)
+
+    if not radiant and not dire:
         return ""
 
-    won = (radiant_win and our_players[0]["is_radiant"]) or (not radiant_win and not our_players[0]["is_radiant"])
+    # Определяем нашу команду
+    our_team_radiant = any(
+        str(p.get("account_id", 0) + 76561197960265728) in our_steam_ids and p.get("player_slot", 0) < 128
+        for p in players_data
+    )
+    won = (radiant_win and our_team_radiant) or (not radiant_win and not our_team_radiant)
     result_emoji = "🏆 ПОБЕДА!" if won else "💀 ПОРАЖЕНИЕ"
 
     lines = [
@@ -147,10 +200,12 @@ def format_match_message(match: dict, our_steam_ids: set[str]) -> str:
         f"⏱ Длительность: {duration_min}:{duration_sec:02d}",
         f"🎮 Матч #{match.get('match_id', '?')}",
         "",
-        "👤 Наши игроки:",
+        "🟢 Radiant:",
     ]
-    for p in our_players:
-        lines.append(f"  @{p['tg']} — <b>{p['hero']}</b> ({p['kda']})")
+    lines.extend(radiant)
+    lines.append("")
+    lines.append("🔴 Dire:")
+    lines.extend(dire)
 
     return "\n".join(lines)
 
@@ -162,7 +217,8 @@ async def monitor_matches(app):
 
         HOST_ID = PLAYERS["wa6ingtonn"]
         logger.info("Initializing last match ID for wa6ingtonn...")
-        mid = await get_last_match_id(session, HOST_ID)
+        result = await get_last_match_id(session, HOST_ID)
+        mid = result[0] if result else None
         if mid:
             last_match[HOST_ID] = mid
             logger.info(f"  wa6ingtonn: last match = {mid}")
@@ -175,7 +231,8 @@ async def monitor_matches(app):
             try:
                 await asyncio.sleep(120)
 
-                mid = await get_last_match_id(session, HOST_ID)
+                result = await get_last_match_id(session, HOST_ID)
+                mid = result[0] if result else None
 
                 if not mid:
                     logger.warning("No match returned for wa6ingtonn")
@@ -317,7 +374,8 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
         HOST_ID = PLAYERS["wa6ingtonn"]
-        mid = await get_last_match_id(session, HOST_ID)
+        result = await get_last_match_id(session, HOST_ID)
+        mid = result[0] if result else None
         if not mid:
             await update.message.reply_text("❌ Не удалось найти матч.")
             return
@@ -368,7 +426,8 @@ async def send_last_match_on_start(app):
         async with aiohttp.ClientSession() as session:
             await fetch_hero_names(session)
             HOST_ID = PLAYERS["wa6ingtonn"]
-            mid = await get_last_match_id(session, HOST_ID)
+            result = await get_last_match_id(session, HOST_ID)
+            mid = result[0] if result else None
             if not mid:
                 return
             match = await get_match_details(session, mid)
