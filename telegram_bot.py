@@ -189,14 +189,15 @@ async def monitor_matches(app):
         # Загружаем названия героев
         await fetch_hero_names(session)
 
-        # Инициализируем last_match для всех игроков
-        logger.info("Initializing last match IDs...")
-        for tg, steam_id in PLAYERS.items():
-            mid = await get_last_match_id(session, steam_id)
-            if mid:
-                last_match[steam_id] = mid
-                logger.info(f"  {tg}: last match = {mid}")
-            await asyncio.sleep(1)
+        # Инициализируем last_match только для wa6ingtonn (публичный профиль)
+        logger.info("Initializing last match ID for wa6ingtonn...")
+        host_id = PLAYERS["wa6ingtonn"]
+        mid = await get_last_match_id(session, host_id)
+        if mid:
+            last_match[host_id] = mid
+            logger.info(f"  wa6ingtonn: last match = {mid}")
+        else:
+            logger.warning(f"  wa6ingtonn: NO MATCH FOUND — check Steam ID or profile privacy")
 
         logger.info("Match monitor started!")
 
@@ -212,14 +213,17 @@ async def monitor_matches(app):
                     await asyncio.sleep(0.5)
 
                     if not mid:
+                        logger.warning(f"  [{tg}] no match returned from Steam API")
                         continue
                     if mid == last_match.get(steam_id):
+                        logger.info(f"  [{tg}] no new match (last={mid})")
                         continue
                     if mid in reported_matches:
                         last_match[steam_id] = mid
                         continue
 
                     # Новый матч!
+                    logger.info(f"  [{tg}] NEW match = {mid}!")
                     last_match[steam_id] = mid
                     new_matches.setdefault(mid, []).append(steam_id)
 
