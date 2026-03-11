@@ -215,15 +215,18 @@ async def monitor_matches(app):
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
 
-        HOST_ID = PLAYERS["wa6ingtonn"]
-        logger.info("Initializing last match ID for wa6ingtonn...")
-        result = await get_last_match_id(session, HOST_ID)
-        mid = result[0] if result else None
-        if mid:
-            last_match[HOST_ID] = mid
-            logger.info(f"  wa6ingtonn: last match = {mid}")
-        else:
-            logger.warning("  wa6ingtonn: NO MATCH FOUND")
+        logger.info("Initializing last match IDs for all players...")
+
+        # Инициализация последних матчей для всех игроков
+        for name, steam_id in PLAYERS.items():
+            result = await get_last_match_id(session, steam_id)
+            mid = result[0] if result else None
+
+            if mid:
+                last_match[steam_id] = mid
+                logger.info(f"{name}: last match = {mid}")
+            else:
+                logger.warning(f"{name}: NO MATCH FOUND")
 
         logger.info("Match monitor started!")
 
@@ -231,57 +234,64 @@ async def monitor_matches(app):
             try:
                 await asyncio.sleep(120)
 
-                result = await get_last_match_id(session, HOST_ID)
-                mid = result[0] if result else None
+                for name, steam_id in PLAYERS.items():
 
-                if not mid:
-                    logger.warning("No match returned for wa6ingtonn")
-                    continue
+                    result = await get_last_match_id(session, steam_id)
+                    mid = result[0] if result else None
 
-                if mid == last_match.get(HOST_ID):
-                    logger.info(f"No new match (last={mid})")
-                    continue
+                    if not mid:
+                        continue
 
-                if mid in reported_matches:
-                    last_match[HOST_ID] = mid
-                    continue
+                    # матч уже известен
+                    if mid == last_match.get(steam_id):
+                        continue
 
-                logger.info(f"NEW match for wa6ingtonn: {mid}")
-                last_match[HOST_ID] = mid
+                    # уже отправляли
+                    if mid in reported_matches:
+                        last_match[steam_id] = mid
+                        continue
 
-                await asyncio.sleep(30)
+                    logger.info(f"NEW match detected for {name}: {mid}")
+                    last_match[steam_id] = mid
 
-                match = await get_match_details(session, mid)
-                if not match:
-                    logger.warning(f"Could not get details for match {mid}")
-                    continue
+                    # ждём чтобы матч прогрузился
+                    await asyncio.sleep(30)
 
-                our_in_match = set()
-                for p in match.get("players", []):
-                    steam64 = str(p.get("account_id", 0) + 76561197960265728)
-                    if steam64 in PLAYERS.values():
-                        our_in_match.add(steam64)
+                    match = await get_match_details(session, mid)
+                    if not match:
+                        logger.warning(f"Could not get details for match {mid}")
+                        continue
 
-                logger.info(f"Match {mid}: found {len(our_in_match)} of our players")
+                    our_in_match = set()
 
-                if len(our_in_match) < 4:
-                    logger.info(f"Only {len(our_in_match)} players, skipping (need 2+)")
-                    continue
+                    for p in match.get("players", []):
+                        steam64 = str(p.get("account_id", 0) + 76561197960265728)
+                        if steam64 in PLAYERS.values():
+                            our_in_match.add(steam64)
 
-                msg = format_match_message(match, our_in_match)
-                if msg:
-                    reported_matches.add(mid)
-                    await app.bot.send_message(
-                        chat_id=ALLOWED_CHAT_ID,
-                        text=msg,
-                        parse_mode="HTML",
-                    )
-                    logger.info(f"Reported match {mid} with {len(our_in_match)} players")
+                    logger.info(f"Match {mid}: found {len(our_in_match)} of our players")
+
+                    # минимум 2 ваших игрока
+                    if len(our_in_match) < 2:
+                        logger.info("Less than 2 of our players, skipping")
+                        continue
+
+                    msg = format_match_message(match, our_in_match)
+
+                    if msg:
+                        reported_matches.add(mid)
+
+                        await app.bot.send_message(
+                            chat_id=ALLOWED_CHAT_ID,
+                            text=msg,
+                            parse_mode="HTML",
+                        )
+
+                        logger.info(f"Reported match {mid}")
 
             except Exception as e:
                 logger.error(f"Monitor error: {e}")
                 await asyncio.sleep(30)
-
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     if not await group_only(update): return
     await update.message.reply_text(
