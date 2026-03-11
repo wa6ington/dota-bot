@@ -264,7 +264,7 @@ async def monitor_matches(app):
 
                 logger.info(f"Match {mid}: found {len(our_in_match)} of our players")
 
-                if len(our_in_match) < 2:
+                if len(our_in_match) < 4:
                     logger.info(f"Only {len(our_in_match)} players, skipping (need 2+)")
                     continue
 
