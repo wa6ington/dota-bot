@@ -22,7 +22,6 @@ TOKEN           = "8356191098:AAFu3axbr5OaEDlYyRUK_bhNKj1Zty8Za8Y"
 STEAM_API_KEY   = "F25FE222BDDD5D2687073BAEF0D8CBB8"
 ALLOWED_CHAT_ID = -1003719823975
 
-# Steam ID каждого игрока
 PLAYERS = {
     "limon1705":      "76561199015459521",
     "wa6ingtonn":     "76561198312814207",
@@ -31,16 +30,15 @@ PLAYERS = {
     "neskvikcpivom2": "76561199004933239",
 }
 
-# Для /dota и /roulette — просто username без регистрации
 DEFAULT_TAGS = list(PLAYERS.keys())
-
-HOST_TG = "wa6ingtonn"
-HOST_ID = PLAYERS[HOST_TG]
+HOST_TG      = "wa6ingtonn"
+HOST_ID      = PLAYERS[HOST_TG]
 
 sessions:         dict[int, dict] = {}
 reported_matches: set[str]        = set()
 last_known_match: str | None      = None
 HERO_NAMES:       dict[int, str]  = {}
+ITEM_NAMES:       dict[int, str]  = {}
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -48,11 +46,10 @@ async def group_only(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
 
 def all_mentions() -> str:
-    """Тегаем всех через @username"""
     return " ".join(f"@{u}" for u in DEFAULT_TAGS)
 
 def session_text(session: dict) -> str:
-    time_str = f" в <b>{session['time']}</b>" if session.get("time") else ""
+    time_str  = f" в <b>{session['time']}</b>" if session.get("time") else ""
     yes_names = session.get("yes_names", [])
     no_names  = session.get("no_names", [])
     return (
@@ -68,7 +65,7 @@ def vote_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton("❌ Не могу", callback_data="vote_no"),
     ]])
 
-# ─── Steam / OpenDota ────────────────────────────────────────────────────────
+# ─── API ─────────────────────────────────────────────────────────────────────
 
 async def fetch_hero_names(session: aiohttp.ClientSession):
     global HERO_NAMES
@@ -81,6 +78,18 @@ async def fetch_hero_names(session: aiohttp.ClientSession):
             logger.info(f"Loaded {len(HERO_NAMES)} heroes")
     except Exception as e:
         logger.warning(f"Could not load hero names: {e}")
+
+async def fetch_item_names(session: aiohttp.ClientSession):
+    global ITEM_NAMES
+    if ITEM_NAMES:
+        return
+    try:
+        async with session.get("https://api.opendota.com/api/constants/items", timeout=aiohttp.ClientTimeout(total=10)) as r:
+            data = await r.json()
+            ITEM_NAMES = {v["id"]: v["dname"] for k, v in data.items() if "id" in v and "dname" in v}
+            logger.info(f"Loaded {len(ITEM_NAMES)} items")
+    except Exception as e:
+        logger.warning(f"Could not load item names: {e}")
 
 async def get_last_match_id(session: aiohttp.ClientSession, steam_id: str) -> str | None:
     try:
@@ -99,7 +108,17 @@ async def get_last_match_id(session: aiohttp.ClientSession, steam_id: str) -> st
     return None
 
 async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> dict | None:
-    # Steam API
+    # OpenDota первым — там есть предметы и статы
+    try:
+        async with session.get(f"https://api.opendota.com/api/matches/{match_id}", timeout=aiohttp.ClientTimeout(total=15)) as r:
+            if r.status == 200:
+                data = await r.json()
+                if data.get("match_id") or data.get("players"):
+                    logger.info(f"Got match {match_id} from OpenDota")
+                    return data
+    except Exception as e:
+        logger.warning(f"OpenDota match details error: {e}")
+    # Steam API fallback
     try:
         url = f"https://api.steampowered.com/IDOTA2Match_570/GetMatchDetails/v1/?key={STEAM_API_KEY}&match_id={match_id}"
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
@@ -110,17 +129,24 @@ async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> di
                 return result
     except Exception as e:
         logger.warning(f"Steam match details error: {e}")
-    # OpenDota fallback
-    try:
-        async with session.get(f"https://api.opendota.com/api/matches/{match_id}", timeout=aiohttp.ClientTimeout(total=15)) as r:
-            if r.status == 200:
-                data = await r.json()
-                if data.get("match_id"):
-                    logger.info(f"Got match {match_id} from OpenDota")
-                    return data
-    except Exception as e:
-        logger.warning(f"OpenDota match details error: {e}")
     return None
+
+async def request_parse(session: aiohttp.ClientSession, match_id: str):
+    try:
+        async with session.post(f"https://api.opendota.com/api/request/{match_id}", timeout=aiohttp.ClientTimeout(total=10)) as r:
+            logger.info(f"Requested parse for {match_id}: {r.status}")
+    except Exception as e:
+        logger.warning(f"Parse request error: {e}")
+
+def get_items(p: dict) -> str:
+    slots = ["item_0","item_1","item_2","item_3","item_4","item_5"]
+    items = []
+    for slot in slots:
+        iid = p.get(slot, 0)
+        if iid and iid != 0:
+            name = ITEM_NAMES.get(iid, f"item#{iid}")
+            items.append(name)
+    return ", ".join(items) if items else "—"
 
 def format_match_message(match: dict) -> str:
     players_data = match.get("players", [])
@@ -128,10 +154,13 @@ def format_match_message(match: dict) -> str:
     duration_sec = match.get("duration", 0) % 60
     radiant_win  = match.get("radiant_win", False)
     steam_to_tg  = {v: k for k, v in PLAYERS.items()}
+    # account_id -> tg username (32-bit form)
+    acct_to_tg   = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
 
     radiant = []
     dire    = []
     our_team_radiant = None
+    our_players = []
 
     for p in players_data:
         account_id = p.get("account_id", 0)
@@ -142,15 +171,26 @@ def format_match_message(match: dict) -> str:
         kills      = p.get("kills", 0)
         deaths     = p.get("deaths", 0)
         assists    = p.get("assists", 0)
+        gpm        = p.get("gold_per_min", 0)
+        xpm        = p.get("xp_per_min", 0)
+        dmg        = p.get("hero_damage", 0)
+        lh         = p.get("last_hits", 0)
+        items_str  = get_items(p)
 
-        tg_name = steam_to_tg.get(steam64) if account_id != 4294967295 else None
+        tg_name = acct_to_tg.get(account_id) if account_id and account_id != 4294967295 else None
 
         if tg_name:
-            entry = f"  @{tg_name} — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+            our_players.append(tg_name)
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
+            entry = (
+                f"  @{tg_name} — <b>{hero}</b>\n"
+                f"    📊 {kills}/{deaths}/{assists} | GPM: {gpm} | XPM: {xpm}\n"
+                f"    ⚔️ Урон: {dmg:,} | LH: {lh}\n"
+                f"    🎒 {items_str}"
+            )
         else:
-            entry = f"  ? — <b>{hero}</b>"
+            entry = f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
 
         if is_radiant:
             radiant.append(entry)
@@ -175,16 +215,18 @@ def format_match_message(match: dict) -> str:
     lines.append("🔴 Dire:")
     lines.extend(dire)
 
+    if our_players:
+        lines.append("")
+        lines.append(f"🛡 Наши: {', '.join('@'+p for p in our_players)}")
+
     return "\n".join(lines)
 
 def count_our_players(match: dict) -> int:
-    steam_to_tg = {v: k for k, v in PLAYERS.items()}
+    acct_to_tg = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
     count = 0
     for p in match.get("players", []):
         account_id = p.get("account_id", 0)
-        if account_id == 4294967295:
-            continue
-        if str(account_id + 76561197960265728) in steam_to_tg:
+        if account_id and account_id != 4294967295 and account_id in acct_to_tg:
             count += 1
     return count
 
@@ -196,6 +238,8 @@ async def monitor_matches(app):
 
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
+        await fetch_item_names(session)
+
         mid = await get_last_match_id(session, HOST_ID)
         last_known_match = mid
         logger.info(f"Monitor started. Last match: {last_known_match}")
@@ -212,7 +256,9 @@ async def monitor_matches(app):
                 logger.info(f"NEW match: {mid}")
                 last_known_match = mid
 
-                await asyncio.sleep(45)
+                # Запрашиваем парсинг OpenDota
+                await request_parse(session, mid)
+                await asyncio.sleep(60)  # ждём парсинг
 
                 match = await get_match_details(session, mid)
                 if not match:
@@ -304,13 +350,21 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Ищу последний матч...")
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
+        await fetch_item_names(session)
         mid = await get_last_match_id(session, HOST_ID)
         if not mid:
             await update.message.reply_text("❌ Не удалось найти матч.")
             return
+        # Запрашиваем парсинг на случай если не спарсен
+        await request_parse(session, mid)
+        await asyncio.sleep(3)
         match = await get_match_details(session, mid)
         if not match:
             await update.message.reply_text("❌ Не удалось получить детали матча.")
+            return
+        our_count = count_our_players(match)
+        if our_count < 1:
+            await update.message.reply_text("😕 Никого из наших в последнем матче не найдено.")
             return
         msg = format_match_message(match)
         if msg:
