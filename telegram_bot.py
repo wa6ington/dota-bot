@@ -34,6 +34,9 @@ DEFAULT_TAGS = list(PLAYERS.keys())
 HOST_TG      = "wa6ingtonn"
 HOST_ID      = PLAYERS[HOST_TG]
 
+# Telegram username (lowercase) -> steam_id
+TG_TO_STEAM = {tg.lower(): sid for tg, sid in PLAYERS.items()}
+
 sessions:         dict[int, dict] = {}
 reported_matches: set[str]        = set()
 last_known_match: str | None      = None
@@ -148,6 +151,21 @@ def get_items(p: dict) -> str:
             items.append(name)
     return ", ".join(items) if items else "—"
 
+def get_rank(rank_tier) -> str:
+    if not rank_tier:
+        return "Uncalibrated"
+    medals = {1:"Herald",2:"Guardian",3:"Crusader",4:"Archon",5:"Legend",6:"Ancient",7:"Divine",8:"Immortal"}
+    tier = rank_tier // 10
+    star = rank_tier % 10
+    name = medals.get(tier, "?")
+    if tier == 8:
+        return "Immortal"
+    return f"{name} {star}⭐"
+
+def get_position(team_slot: int) -> str:
+    positions = {0:"Pos 1 (Carry)", 1:"Pos 2 (Mid)", 2:"Pos 3 (Offlane)", 3:"Pos 4 (Soft Support)", 4:"Pos 5 (Hard Support)"}
+    return positions.get(team_slot, f"Pos {team_slot+1}")
+
 def format_match_message(match: dict) -> str:
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
@@ -176,6 +194,7 @@ def format_match_message(match: dict) -> str:
         dmg        = p.get("hero_damage", 0)
         lh         = p.get("last_hits", 0)
         items_str  = get_items(p)
+        team_slot  = p.get("team_slot", 0)
 
         tg_name = acct_to_tg.get(account_id) if account_id and account_id != 4294967295 else None
 
@@ -183,8 +202,11 @@ def format_match_message(match: dict) -> str:
             our_players.append(tg_name)
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
+            rank    = get_rank(p.get("rank_tier"))
+            pos     = get_position(p.get("team_slot", 0))
             entry = (
                 f"  @{tg_name} — <b>{hero}</b>\n"
+                f"    🏅 {rank} | {pos}\n"
                 f"    📊 {kills}/{deaths}/{assists} | GPM: {gpm} | XPM: {xpm}\n"
                 f"    ⚔️ Урон: {dmg:,} | LH: {lh}\n"
                 f"    🎒 {items_str}"
@@ -347,15 +369,26 @@ async def cmd_roulette(update: Update, _: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
     if not await group_only(update): return
-    await update.message.reply_text("🔍 Ищу последний матч...")
+    user = update.effective_user
+    username = (user.username or "").lower()
+
+    # Ищем steam ID того кто написал команду
+    steam_id = TG_TO_STEAM.get(username)
+    if not steam_id:
+        await update.message.reply_text(
+            f"❌ @{user.username or user.first_name} не найден в списке игроков.\n"
+            f"Список: {', '.join('@'+u for u in PLAYERS)}"
+        )
+        return
+
+    await update.message.reply_text(f"🔍 Ищу последний матч @{username}...")
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
         await fetch_item_names(session)
-        mid = await get_last_match_id(session, HOST_ID)
+        mid = await get_last_match_id(session, steam_id)
         if not mid:
             await update.message.reply_text("❌ Не удалось найти матч.")
             return
-        # Запрашиваем парсинг на случай если не спарсен
         await request_parse(session, mid)
         await asyncio.sleep(3)
         match = await get_match_details(session, mid)
@@ -364,7 +397,7 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
             return
         our_count = count_our_players(match)
         if our_count < 1:
-            await update.message.reply_text("😕 Никого из наших в последнем матче не найдено.")
+            await update.message.reply_text("😕 Никого из наших в этом матче не найдено.")
             return
         msg = format_match_message(match)
         if msg:
