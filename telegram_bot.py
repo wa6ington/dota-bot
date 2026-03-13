@@ -28,7 +28,6 @@ PLAYERS = {
     "areembee":       "76561198385353313",
     "Tawer4K":        "76561198841600203",
     "neskvikcpivom2": "76561199004933239",
-    "beekssus":       "76561198881056614"
 }
 
 DEFAULT_TAGS = list(PLAYERS.keys())
@@ -167,6 +166,22 @@ def get_position(team_slot: int) -> str:
     positions = {0:"Pos 1 (Carry)", 1:"Pos 2 (Mid)", 2:"Pos 3 (Offlane)", 3:"Pos 4 (Soft Support)", 4:"Pos 5 (Hard Support)"}
     return positions.get(team_slot, f"Pos {team_slot+1}")
 
+def get_game_mode(game_mode: int, lobby_type: int) -> str:
+    modes = {
+        0: "Unknown", 1: "All Pick", 2: "Captain's Mode", 3: "Random Draft",
+        4: "Single Draft", 5: "All Random", 7: "Diretide", 8: "Reverse CM",
+        9: "Greeviling", 11: "All Draft", 12: "Least Played", 13: "New Player Pool",
+        14: "Compendium", 15: "Custom", 16: "Captains Draft", 17: "Balanced Draft",
+        18: "Ability Draft", 19: "Event", 20: "All Random Deathmatch", 21: "1v1 Solo Mid",
+        22: "All Pick Ranked", 23: "Turbo", 24: "Mutation",
+    }
+    lobbies = {0: "Normal", 1: "Practice", 2: "Tournament", 5: "Team Match", 6: "Solo Queue", 7: "Ranked", 9: "1v1 Mid"}
+    mode = modes.get(game_mode, f"Mode {game_mode}")
+    lobby = lobbies.get(lobby_type, "")
+    if lobby and lobby != "Normal":
+        return f"{mode} ({lobby})"
+    return mode
+
 def format_match_message(match: dict) -> str:
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
@@ -226,10 +241,12 @@ def format_match_message(match: dict) -> str:
     won = (radiant_win and our_team_radiant) or (not radiant_win and not our_team_radiant)
     result_emoji = "🏆 ПОБЕДА!" if won else "💀 ПОРАЖЕНИЕ"
 
+    game_mode = get_game_mode(match.get("game_mode", 0), match.get("lobby_type", 0))
+
     lines = [
         result_emoji,
         f"⏱ Длительность: {duration_min}:{duration_sec:02d}",
-        f"🎮 Матч #{match.get('match_id', '?')}",
+        f"🎮 Матч #{match.get('match_id', '?')} | {game_mode}",
         "",
         "🟢 Radiant:",
     ]
@@ -313,7 +330,8 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
         "🎮 <b>Dota 2 Bot</b>\n\n"
         "/dota — позвать всех прямо сейчас\n"
         "/schedule 21:00 — запланировать игру\n"
-        "/lastmatch — последний матч\n"
+        "/lastmatch — твой последний матч\n"
+        "/analyze 123456 — разбор любого матча\n"
         "/roulette — кто аутист?\n"
         "/players — список игроков\n"
         "/cancel — отменить сессию",
@@ -406,6 +424,31 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("😕 Не удалось сформировать сообщение.")
 
+async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await group_only(update): return
+    if not ctx.args:
+        await update.message.reply_text("Использование: /analyze 8726314725")
+        return
+    match_id = ctx.args[0].strip()
+    if not match_id.isdigit():
+        await update.message.reply_text("❌ Неверный match_id. Пример: /analyze 8726314725")
+        return
+    await update.message.reply_text(f"🔍 Загружаю матч #{match_id}...")
+    async with aiohttp.ClientSession() as session:
+        await fetch_hero_names(session)
+        await fetch_item_names(session)
+        await request_parse(session, match_id)
+        await asyncio.sleep(3)
+        match = await get_match_details(session, match_id)
+        if not match:
+            await update.message.reply_text("❌ Матч не найден. Попробуй позже — OpenDota может ещё не спарсить.")
+            return
+        msg = format_match_message(match)
+        if msg:
+            await update.message.reply_text(msg, parse_mode="HTML")
+        else:
+            await update.message.reply_text("😕 Не удалось сформировать сообщение.")
+
 async def on_vote(update: Update, _: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -450,6 +493,7 @@ def main():
     app.add_handler(CommandHandler("cancel",    cmd_cancel))
     app.add_handler(CommandHandler("roulette",  cmd_roulette))
     app.add_handler(CommandHandler("lastmatch", cmd_lastmatch))
+    app.add_handler(CommandHandler("analyze",   cmd_analyze))
     app.add_handler(CallbackQueryHandler(on_vote, pattern="^vote_"))
     logger.info("🎮 ErniFidBot запущен!")
     app.run_polling()
