@@ -28,6 +28,7 @@ PLAYERS = {
     "areembee":       "76561198385353313",
     "Tawer4K":        "76561198841600203",
     "neskvikcpivom2": "76561199004933239",
+    "beekssus":       "76561198881056614"
 }
 
 DEFAULT_TAGS = list(PLAYERS.keys())
