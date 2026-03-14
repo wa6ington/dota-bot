@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""
+🎮 Dota 2 Telegram Bot — @ErniFidBot
+"""
+
+import logging
+import asyncio
+
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
+
+from config import TOKEN
+from commands import (
+    cmd_start, cmd_players, cmd_dota, cmd_schedule,
+    cmd_cancel, cmd_roulette, cmd_lastmatch, cmd_analyze, on_vote
+)
+from monitor import monitor_matches
+
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
+
+
+async def post_init(app):
+    asyncio.create_task(monitor_matches(app))
+
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
+
+    app.add_handler(CommandHandler("start",     cmd_start))
+    app.add_handler(CommandHandler("help",      cmd_start))
+    app.add_handler(CommandHandler("players",   cmd_players))
+    app.add_handler(CommandHandler("dota",      cmd_dota))
+    app.add_handler(CommandHandler("schedule",  cmd_schedule))
+    app.add_handler(CommandHandler("cancel",    cmd_cancel))
+    app.add_handler(CommandHandler("roulette",  cmd_roulette))
+    app.add_handler(CommandHandler("lastmatch", cmd_lastmatch))
+    app.add_handler(CommandHandler("analyze",   cmd_analyze))
+    app.add_handler(CallbackQueryHandler(on_vote, pattern="^vote_"))
+
+    import logging
+    logging.getLogger(__name__).info("🎮 ErniFidBot запущен!")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
