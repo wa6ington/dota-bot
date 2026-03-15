@@ -279,11 +279,11 @@ async def slash_players(interaction: discord.Interaction):
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
-        "`/dota` — позвать всех играть\n"
-        "`/schedule 21:00` — запланировать игру\n"
-        "`/lastmatch [@игрок]` — последний матч\n"
-        "`/analyze` — анализ матча по ID\n"
-        "`/roulette` — кто аутист дня?\n"
+        "`/dota` — позвать всех прямо сейчас\n"
+        "`/schedule 21:00 KZ` — запланировать игру (указать пояс(КЗ/МСК))\n"
+        "`/lastmatch [игрок]` — твой или чужой последний матч\n"
+        "`/analyze 123456` — разбор любого матча\n"
+        "`/roulette` — кто аутист?\n"
         "`/players` — список игроков\n",
         ephemeral=True
     )
