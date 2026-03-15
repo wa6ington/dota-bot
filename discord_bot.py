@@ -226,6 +226,3 @@ async def cmd_help(ctx):
         "`!players` — список игроков\n"
     )
 
-
-if __name__ == "__main__":
-    bot.run(DISCORD_TOKEN)

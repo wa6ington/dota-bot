@@ -41,10 +41,21 @@ def run_telegram():
 
 
 def run_discord():
-    import discord_bot  # запускает bot.run() внутри
+    import os
+    import discord
+    from discord_bot import bot, DISCORD_TOKEN
+    token = os.environ.get("DISCORD_TOKEN", DISCORD_TOKEN)
+    if not token:
+        logger.warning("DISCORD_TOKEN not set, skipping Discord bot")
+        return
+    try:
+        bot.run(token)
+    except Exception as e:
+        logger.error(f"Discord bot error: {e}")
 
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_discord, daemon=True)
     t.start()
+    logger.info("Discord bot thread started")
     run_telegram()
