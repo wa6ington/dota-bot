@@ -15,10 +15,56 @@ logger = logging.getLogger(__name__)
 sessions: dict[int, dict] = {}
 
 
+# ─── timezone helpers ─────────────────────────────────────────────────────────
+
+def format_two_timezones(time_str: str) -> str:
+    """
+    Принимает время в формате HH:MM (считается МСК, UTC+3).
+    Возвращает строку вида "21:00 МСК / 23:00 Алматы".
+    Если формат неверный — возвращает исходную строку как есть.
+    """
+    try:
+        parts = time_str.strip().split(":")
+        if len(parts) != 2:
+            return time_str
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+            return time_str
+        # МСК = Алматы - 2 часа
+        msk_hours = (hours - 2) % 24
+        return f"{hours:02d}:{minutes:02d} Алматы / {msk_hours:02d}:{minutes:02d} МСК"
+    except (ValueError, IndexError):
+        return time_str
+
+
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 async def group_only(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
+
+
+# ─── smart parse wait ────────────────────────────────────────────────────────
+
+async def wait_for_match(session, match_id: str, send_status) -> dict | None:
+    """
+    Пробует получить матч до 3 раз с паузами 5 / 15 / 30 сек.
+    Считает матч готовым если у хотя бы одного игрока есть предметы.
+    """
+    delays = [5, 15, 30]
+    for attempt, delay in enumerate(delays, start=1):
+        await send_status(f"⏳ Ожидаю ответа от OpenDota... (попытка {attempt}/3)")
+        await asyncio.sleep(delay)
+        match = await get_match_details(session, match_id)
+        if not match:
+            continue
+        has_items = any(
+            p.get("item_0") or p.get("item_1") or p.get("item_2")
+            for p in match.get("players", [])
+        )
+        if has_items:
+            return match
+    return await get_match_details(session, match_id)
 
 def all_mentions() -> str:
     return " ".join(f"@{u}" for u in DEFAULT_TAGS)
@@ -47,7 +93,7 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎮 <b>Dota 2 Bot</b>\n\n"
         "/dota — позвать всех прямо сейчас\n"
-        "/schedule 21:00 — запланировать игру\n"
+        "/schedule 21:00 — запланировать игру (время Алматы)\n"
         "/lastmatch — твой последний матч\n"
         "/analyze 123456 — разбор любого матча\n"
         "/roulette — кто аутист?\n"
@@ -65,6 +111,10 @@ async def _start_session(update: Update, time_str: str | None):
     if not await group_only(update): return
     chat_id = update.effective_chat.id
     caller  = update.effective_user
+
+    # Если передано время — форматируем с двумя поясами
+    display_time = format_two_timezones(time_str) if time_str else None
+
     sessions[chat_id] = {
         "caller":    caller.full_name or caller.username or str(caller.id),
         "caller_id": caller.id,
@@ -72,7 +122,7 @@ async def _start_session(update: Update, time_str: str | None):
         "no_names":  [],
         "yes_ids":   set(),
         "no_ids":    set(),
-        "time": time_str,
+        "time": display_time,
     }
     await update.message.reply_text(all_mentions())
     await update.message.reply_text(session_text(sessions[chat_id]), parse_mode="HTML", reply_markup=vote_kb())
@@ -83,7 +133,7 @@ async def cmd_dota(update: Update, _: ContextTypes.DEFAULT_TYPE):
 async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     time_str = " ".join(ctx.args) if ctx.args else None
     if not time_str:
-        await update.message.reply_text("Использование: /schedule 21:00")
+        await update.message.reply_text("Использование: /schedule 21:00  (время Алматы)")
         return
     await _start_session(update, time_str)
 
@@ -126,8 +176,7 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Не удалось найти матч.")
             return
         await request_parse(session, mid)
-        await asyncio.sleep(3)
-        match = await get_match_details(session, mid)
+        match = await wait_for_match(session, mid, update.message.reply_text)
         if not match:
             await update.message.reply_text("❌ Не удалось получить детали матча.")
             return
@@ -151,8 +200,7 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await fetch_hero_names(session)
         await fetch_item_names(session)
         await request_parse(session, match_id)
-        await asyncio.sleep(3)
-        match = await get_match_details(session, match_id)
+        match = await wait_for_match(session, match_id, update.message.reply_text)
         if not match:
             await update.message.reply_text("❌ Матч не найден. Попробуй позже.")
             return
