@@ -1,15 +1,23 @@
 import steam
-from config import PLAYERS
+from config import PLAYERS, DISCORD_TO_STEAM, DISCORD_USER_IDS
 from datetime import datetime, timezone, timedelta
 
 
 # UTC+5 Алматы, UTC+3 МСК
-TZ_MSK    = timezone(timedelta(hours=3))   # UTC+3
-TZ_ALMATY = timezone(timedelta(hours=5))   # UTC+5
+TZ_MSK    = timezone(timedelta(hours=3))
+TZ_ALMATY = timezone(timedelta(hours=5))
+
+# steam account_id -> discord user id (для пингов <@ID>)
+# строим один раз при импорте
+_ACCT_TO_DISCORD_ID: dict[int, int] = {}
+for _dc_username, _steam_id in DISCORD_TO_STEAM.items():
+    _acct = int(_steam_id) - 76561197960265728
+    _uid  = DISCORD_USER_IDS.get(_dc_username)
+    if _uid:
+        _ACCT_TO_DISCORD_ID[_acct] = _uid
 
 
 def format_start_time(start_time: int) -> str:
-    """Конвертирует Unix timestamp в строку с двумя часовыми поясами."""
     if not start_time:
         return ""
     dt_utc    = datetime.fromtimestamp(start_time, tz=timezone.utc)
@@ -55,8 +63,8 @@ def get_game_mode(game_mode: int, lobby_type: int) -> str:
     }
     lobbies = {0: "Normal", 1: "Practice", 2: "Tournament",
                5: "Team Match", 6: "Solo Queue", 7: "Ranked", 9: "1v1 Mid"}
-    mode   = modes.get(game_mode, f"Mode {game_mode}")
-    lobby  = lobbies.get(lobby_type, "")
+    mode  = modes.get(game_mode, f"Mode {game_mode}")
+    lobby = lobbies.get(lobby_type, "")
     if lobby and lobby != "Normal":
         return f"{mode} ({lobby})"
     return mode
@@ -68,17 +76,23 @@ def get_items(p: dict) -> str:
     return ", ".join(i for i in items if i) or "—"
 
 
-def format_match_message(match: dict) -> str:
+def format_match_message(match: dict, platform: str = "telegram") -> str:
+    """
+    platform = "telegram" — показывает @tg_username
+    platform = "discord"  — показывает <@discord_user_id>
+    """
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
     duration_sec = match.get("duration", 0) % 60
     radiant_win  = match.get("radiant_win", False)
-    acct_to_tg   = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
+
+    # TG: account_id -> tg_username
+    acct_to_tg = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
 
     radiant = []
     dire    = []
     our_team_radiant = None
-    our_players      = []
+    our_players      = []  # теги для строки "Наши:"
 
     for p in players_data:
         account_id = p.get("account_id", 0)
@@ -98,20 +112,36 @@ def format_match_message(match: dict) -> str:
         tg_name = acct_to_tg.get(account_id) if account_id and account_id != 4294967295 else None
 
         if tg_name:
-            our_players.append(tg_name)
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
-            rank  = get_rank(p.get("rank_tier"))
-            pos   = get_position(team_slot)
+            rank = get_rank(p.get("rank_tier"))
+            pos  = get_position(team_slot)
+
+            if platform == "discord":
+                discord_id = _ACCT_TO_DISCORD_ID.get(account_id)
+                name_tag   = f"<@{discord_id}>" if discord_id else f"@{tg_name}"
+            else:
+                name_tag = f"@{tg_name}"
+
+            our_players.append(name_tag)
             entry = (
-                f"  @{tg_name} — <b>{hero}</b>\n"
+                f"  {name_tag} — **{hero}**\n"
+                f"    🏅 {rank} | {pos}\n"
+                f"    📊 {kills}/{deaths}/{assists} | GPM: {gpm} | XPM: {xpm}\n"
+                f"    ⚔️ Урон: {dmg:,} | LH: {lh}\n"
+                f"    🎒 {items_str}"
+            ) if platform == "discord" else (
+                f"  {name_tag} — <b>{hero}</b>\n"
                 f"    🏅 {rank} | {pos}\n"
                 f"    📊 {kills}/{deaths}/{assists} | GPM: {gpm} | XPM: {xpm}\n"
                 f"    ⚔️ Урон: {dmg:,} | LH: {lh}\n"
                 f"    🎒 {items_str}"
             )
         else:
-            entry = f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+            if platform == "discord":
+                entry = f"  ? — **{hero}** ({kills}/{deaths}/{assists})"
+            else:
+                entry = f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
 
         if is_radiant:
             radiant.append(entry)
@@ -133,17 +163,13 @@ def format_match_message(match: dict) -> str:
     ]
     if time_str:
         lines.append(time_str)
-    lines += [
-        "",
-        "🟢 Radiant:",
-    ]
+    lines += ["", "🟢 Radiant:"]
     lines.extend(radiant)
-    lines.append("")
-    lines.append("🔴 Dire:")
+    lines += ["", "🔴 Dire:"]
     lines.extend(dire)
 
     if our_players:
         lines.append("")
-        lines.append(f"🛡 Наши: {', '.join('@'+p for p in our_players)}")
+        lines.append(f"🛡 Наши: {', '.join(our_players)}")
 
     return "\n".join(lines)

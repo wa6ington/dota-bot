@@ -36,7 +36,6 @@ last_known_match: str | None = None
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -51,8 +50,7 @@ def strip_html(text: str) -> str:
 
 def discord_players_list() -> str:
     """Список игроков по Discord username'ам (не TG-тегам)."""
-    from config import DISCORD_USER_IDS
-    return " ".join(f"<@{uid}>" for uid in DISCORD_USER_IDS.values())
+    return " ".join(f"@{u}" for u in DISCORD_USERNAMES)
 
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
     delays = [5, 15, 30]
@@ -78,8 +76,14 @@ async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
     try:
-        synced = await tree.sync()
-        logger.info(f"Synced {len(synced)} slash commands")
+        # Сначала синхронизируем глобально
+        synced = await bot.tree.sync()
+        logger.info(f"Synced {len(synced)} slash commands globally")
+        # Потом для каждого сервера отдельно — команды появляются мгновенно
+        for guild in bot.guilds:
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
+            logger.info(f"Synced slash commands to guild: {guild.name}")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
 
@@ -133,7 +137,7 @@ async def monitor_loop():
 
 # ─── slash-команды ────────────────────────────────────────────────────────────
 
-@tree.command(name="dota", description="⚔️ Позвать всех играть в Dota 2")
+@bot.tree.command(name="dota", description="⚔️ Позвать всех играть в Dota 2")
 async def slash_dota(interaction: discord.Interaction):
     tags = discord_players_list()
     msg = await interaction.response.send_message(
@@ -146,7 +150,7 @@ async def slash_dota(interaction: discord.Interaction):
     await sent.add_reaction("❌")
 
 
-@tree.command(name="lastmatch", description="🔍 Показать твой последний матч в Dota 2")
+@bot.tree.command(name="lastmatch", description="🔍 Показать твой последний матч в Dota 2")
 async def slash_lastmatch(interaction: discord.Interaction):
     username = interaction.user.name.lower()
     steam_id = DISCORD_TO_STEAM.get(username)
@@ -187,7 +191,7 @@ async def slash_lastmatch(interaction: discord.Interaction):
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
 
-@tree.command(name="analyze", description="🔎 Анализ матча по ID")
+@bot.tree.command(name="analyze", description="🔎 Анализ матча по ID")
 @app_commands.describe(match_id="ID матча, например: 8726314725")
 async def slash_analyze(interaction: discord.Interaction, match_id: str):
     if not match_id.isdigit():
@@ -219,7 +223,7 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
 
-@tree.command(name="roulette", description="🎰 Кто аутист дня?")
+@bot.tree.command(name="roulette", description="🎰 Кто аутист дня?")
 async def slash_roulette(interaction: discord.Interaction):
     victim = random.choice(DISCORD_USERNAMES)
     await interaction.response.send_message(
@@ -227,13 +231,13 @@ async def slash_roulette(interaction: discord.Interaction):
     )
 
 
-@tree.command(name="players", description="👥 Список игроков")
+@bot.tree.command(name="players", description="👥 Список игроков")
 async def slash_players(interaction: discord.Interaction):
     lines = "\n".join(f"{i+1}. `{u}`" for i, u in enumerate(DISCORD_USERNAMES))
     await interaction.response.send_message(f"🎮 **Игроки:**\n{lines}")
 
 
-@tree.command(name="помощь", description="📋 Список команд")
+@bot.tree.command(name="помощь", description="📋 Список команд")
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
