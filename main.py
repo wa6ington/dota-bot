@@ -6,12 +6,12 @@
 import logging
 import asyncio
 
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from config import TOKEN
 from commands import (
     cmd_start, cmd_players, cmd_dota, cmd_schedule,
-    cmd_cancel, cmd_roulette, cmd_lastmatch, cmd_analyze, on_vote
+    cmd_cancel, cmd_roulette, cmd_lastmatch, cmd_analyze, on_vote, on_button
 )
 from monitor import monitor_matches
 
@@ -35,6 +35,7 @@ def main():
     app.add_handler(CommandHandler("lastmatch", cmd_lastmatch))
     app.add_handler(CommandHandler("analyze",   cmd_analyze))
     app.add_handler(CallbackQueryHandler(on_vote, pattern="^vote_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_button))
 
     import logging
     logging.getLogger(__name__).info("🎮 ErniFidBot запущен!")
