@@ -1,5 +1,24 @@
 import steam
 from config import PLAYERS
+from datetime import datetime, timezone, timedelta
+
+
+# UTC+5 Алматы, UTC+3 МСК
+TZ_MSK    = timezone(timedelta(hours=3))   # UTC+3
+TZ_ALMATY = timezone(timedelta(hours=5))   # UTC+5
+
+
+def format_start_time(start_time: int) -> str:
+    """Конвертирует Unix timestamp в строку с двумя часовыми поясами."""
+    if not start_time:
+        return ""
+    dt_utc    = datetime.fromtimestamp(start_time, tz=timezone.utc)
+    dt_almaty = dt_utc.astimezone(TZ_ALMATY)
+    dt_msk    = dt_utc.astimezone(TZ_MSK)
+    date_str  = dt_msk.strftime("%d.%m.%Y")
+    time_msk  = dt_msk.strftime("%H:%M")
+    time_alm  = dt_almaty.strftime("%H:%M")
+    return f"📅 {date_str} | {time_msk} МСК / {time_alm} Алматы"
 
 
 def get_rank(rank_tier) -> str:
@@ -105,11 +124,16 @@ def format_match_message(match: dict) -> str:
     won           = (radiant_win and our_team_radiant) or (not radiant_win and not our_team_radiant)
     result_emoji  = "🏆 ПОБЕДА!" if won else "💀 ПОРАЖЕНИЕ"
     game_mode_str = get_game_mode(match.get("game_mode", 0), match.get("lobby_type", 0))
+    time_str      = format_start_time(match.get("start_time", 0))
 
     lines = [
         result_emoji,
         f"⏱ Длительность: {duration_min}:{duration_sec:02d}",
         f"🎮 Матч #{match.get('match_id', '?')} | {game_mode_str}",
+    ]
+    if time_str:
+        lines.append(time_str)
+    lines += [
         "",
         "🟢 Radiant:",
     ]
