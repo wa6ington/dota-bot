@@ -153,7 +153,8 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Не удалось найти матч.")
             return
         await request_parse(session, mid)
-        await asyncio.sleep(3)
+        await update.message.reply_text("⏳ Ожидаю ответа от OpenDota (~30 сек)...")
+        await asyncio.sleep(30)
         match = await get_match_details(session, mid)
         if not match:
             await update.message.reply_text("❌ Не удалось получить детали матча.")
@@ -178,7 +179,8 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await fetch_hero_names(session)
         await fetch_item_names(session)
         await request_parse(session, match_id)
-        await asyncio.sleep(3)
+        await update.message.reply_text("⏳ Ожидаю ответа от OpenDota (~30 сек)...")
+        await asyncio.sleep(30)
         match = await get_match_details(session, match_id)
         if not match:
             await update.message.reply_text("❌ Матч не найден. Попробуй позже.")
