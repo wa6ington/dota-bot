@@ -39,7 +39,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 def discord_players_list() -> str:
-    """Настоящие пинги всех игроков через <@user_id>."""
     return " ".join(f"<@{uid}>" for uid in DISCORD_USER_IDS.values())
 
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
@@ -59,6 +58,55 @@ async def wait_for_match(session, match_id: str, send_status) -> dict | None:
     return await get_match_details(session, match_id)
 
 
+# ─── Vote View (кнопки ✅/❌) ─────────────────────────────────────────────────
+
+class VoteView(discord.ui.View):
+    def __init__(self, caller_name: str, time_str: str | None = None):
+        super().__init__(timeout=None)
+        self.caller_name = caller_name
+        self.time_str    = time_str
+        self.yes_ids: set[int] = set()
+        self.no_ids:  set[int] = set()
+        self.yes_names: list[str] = []
+        self.no_names:  list[str] = []
+
+    def build_text(self) -> str:
+        tags     = discord_players_list()
+        time_str = f" в **{self.time_str}**" if self.time_str else ""
+        yes_str  = ", ".join(self.yes_names) or "—"
+        no_str   = ", ".join(self.no_names)  or "—"
+        return (
+            f"⚔️ **{self.caller_name} зовёт в Dota 2{time_str}!**\n\n"
+            f"👥 {tags}\n\n"
+            f"✅ {len(self.yes_ids)}  —  {yes_str}\n"
+            f"❌ {len(self.no_ids)}  —  {no_str}"
+        )
+
+    @discord.ui.button(label="✅ Иду!", style=discord.ButtonStyle.success, custom_id="vote_yes")
+    async def vote_yes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid  = interaction.user.id
+        name = interaction.user.display_name
+        if uid not in self.yes_ids:
+            self.yes_ids.add(uid)
+            self.yes_names.append(name)
+        if uid in self.no_ids:
+            self.no_ids.discard(uid)
+            self.no_names = [n for n in self.no_names if n != name]
+        await interaction.response.edit_message(content=self.build_text(), view=self)
+
+    @discord.ui.button(label="❌ Не могу", style=discord.ButtonStyle.danger, custom_id="vote_no")
+    async def vote_no(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid  = interaction.user.id
+        name = interaction.user.display_name
+        if uid not in self.no_ids:
+            self.no_ids.add(uid)
+            self.no_names.append(name)
+        if uid in self.yes_ids:
+            self.yes_ids.discard(uid)
+            self.yes_names = [n for n in self.yes_names if n != name]
+        await interaction.response.edit_message(content=self.build_text(), view=self)
+
+
 # ─── события ─────────────────────────────────────────────────────────────────
 
 @bot.event
@@ -66,7 +114,8 @@ async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
     try:
-        # Guild sync — команды появляются мгновенно (не ждём часами)
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
         for guild in bot.guilds:
             bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
@@ -126,19 +175,19 @@ async def monitor_loop():
 
 @bot.tree.command(name="dota", description="⚔️ Позвать всех играть в Dota 2")
 async def slash_dota(interaction: discord.Interaction):
-    tags = discord_players_list()
-    await interaction.response.send_message(
-        f"⚔️ **{interaction.user.display_name} зовёт в Dota 2!**\n\n"
-        f"👥 {tags}\n\n"
-        f"Реагируйте: ✅ иду / ❌ не могу"
-    )
-    sent = await interaction.original_response()
-    await sent.add_reaction("✅")
-    await sent.add_reaction("❌")
+    view = VoteView(caller_name=interaction.user.display_name)
+    await interaction.response.send_message(content=view.build_text(), view=view)
+
+
+@bot.tree.command(name="schedule", description="📅 Запланировать игру на определённое время")
+@app_commands.describe(time="Время в формате 21:00 (Алматы)")
+async def slash_schedule(interaction: discord.Interaction, time: str):
+    view = VoteView(caller_name=interaction.user.display_name, time_str=time)
+    await interaction.response.send_message(content=view.build_text(), view=view)
 
 
 @bot.tree.command(name="lastmatch", description="🔍 Показать последний матч в Dota 2")
-@app_commands.describe(user="Упомяни игрока (@ник) или оставь пустым для себя")
+@app_commands.describe(user="Упомяни игрока или оставь пустым для себя")
 async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member = None):
     target   = user if user else interaction.user
     username = target.name.lower()
@@ -147,8 +196,7 @@ async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member
     if not steam_id:
         players_list = ", ".join(f"`{u}`" for u in DISCORD_USERNAMES)
         await interaction.response.send_message(
-            f"❌ `{target.display_name}` не в списке игроков.\n"
-            f"Список: {players_list}",
+            f"❌ `{target.display_name}` не в списке игроков.\nСписок: {players_list}",
             ephemeral=True
         )
         return
@@ -184,10 +232,7 @@ async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member
 @app_commands.describe(match_id="ID матча, например: 8726314725")
 async def slash_analyze(interaction: discord.Interaction, match_id: str):
     if not match_id.isdigit():
-        await interaction.response.send_message(
-            "❌ Неверный match_id. Пример: `/analyze 8726314725`",
-            ephemeral=True
-        )
+        await interaction.response.send_message("❌ Неверный match_id.", ephemeral=True)
         return
 
     await interaction.response.send_message(f"🔍 Загружаю матч **#{match_id}**...")
@@ -215,9 +260,7 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
 @bot.tree.command(name="roulette", description="🎰 Кто аутист дня?")
 async def slash_roulette(interaction: discord.Interaction):
     uid = random.choice(list(DISCORD_USER_IDS.values()))
-    await interaction.response.send_message(
-        f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** <@{uid}>"
-    )
+    await interaction.response.send_message(f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** <@{uid}>")
 
 
 @bot.tree.command(name="players", description="👥 Список игроков")
@@ -231,7 +274,8 @@ async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
         "`/dota` — позвать всех играть\n"
-        "`/lastmatch [@игрок]` — твой или чужой последний матч\n"
+        "`/schedule 21:00` — запланировать игру\n"
+        "`/lastmatch [@игрок]` — последний матч\n"
         "`/analyze` — анализ матча по ID\n"
         "`/roulette` — кто аутист дня?\n"
         "`/players` — список игроков\n",
