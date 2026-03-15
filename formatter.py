@@ -1,5 +1,5 @@
+import steam
 from config import PLAYERS
-from steam import HERO_NAMES, ITEM_NAMES
 
 
 def get_rank(rank_tier) -> str:
@@ -45,7 +45,7 @@ def get_game_mode(game_mode: int, lobby_type: int) -> str:
 
 def get_items(p: dict) -> str:
     slots = ["item_0", "item_1", "item_2", "item_3", "item_4", "item_5"]
-    items = [ITEM_NAMES.get(p.get(s, 0), "") for s in slots if p.get(s, 0)]
+    items = [steam.ITEM_NAMES.get(p.get(s, 0), "") for s in slots if p.get(s, 0)]
     return ", ".join(i for i in items if i) or "—"
 
 
@@ -65,7 +65,7 @@ def format_match_message(match: dict) -> str:
         account_id = p.get("account_id", 0)
         slot       = p.get("player_slot", 0)
         is_radiant = slot < 128
-        hero       = HERO_NAMES.get(p.get("hero_id", 0), f"Hero#{p.get('hero_id',0)}")
+        hero       = steam.HERO_NAMES.get(p.get("hero_id", 0), f"Hero#{p.get('hero_id',0)}")
         kills      = p.get("kills", 0)
         deaths     = p.get("deaths", 0)
         assists    = p.get("assists", 0)
