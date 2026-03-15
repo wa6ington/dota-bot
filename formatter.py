@@ -42,15 +42,21 @@ def get_rank(rank_tier) -> str:
     return f"{name} {star}⭐"
 
 
-def get_position(team_slot: int) -> str:
-    positions = {
-        0: "Pos 1 (Carry)",
-        1: "Pos 2 (Mid)",
-        2: "Pos 3 (Offlane)",
-        3: "Pos 4 (Soft Support)",
-        4: "Pos 5 (Hard Support)",
+def get_position(p: dict) -> str:
+    """Показывает на какой линии стоял игрок по данным OpenDota."""
+    lane_role  = p.get("lane_role")
+    is_roaming = p.get("is_roaming", False)
+
+    if is_roaming:
+        return "Роумер"
+
+    mapping = {
+        1: "Легкая",
+        2: "Мид",
+        3: "Сложная",
+        4: "Вне линии",
     }
-    return positions.get(team_slot, f"Pos {team_slot+1}")
+    return mapping.get(lane_role, "?")
 
 
 def get_game_mode(game_mode: int, lobby_type: int) -> str:
@@ -106,7 +112,6 @@ def format_match_message(match: dict, platform: str = "telegram") -> str:
         xpm        = p.get("xp_per_min", 0)
         dmg        = p.get("hero_damage", 0)
         lh         = p.get("last_hits", 0)
-        team_slot  = p.get("team_slot", 0)
         items_str  = get_items(p)
 
         tg_name = acct_to_tg.get(account_id) if account_id and account_id != 4294967295 else None
@@ -115,7 +120,7 @@ def format_match_message(match: dict, platform: str = "telegram") -> str:
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
             rank = get_rank(p.get("rank_tier"))
-            pos  = get_position(team_slot)
+            pos  = get_position(p)
 
             if platform == "discord":
                 discord_id = _ACCT_TO_DISCORD_ID.get(account_id)
