@@ -17,3 +17,6 @@ DEFAULT_TAGS = list(PLAYERS.keys())
 
 # Telegram username (lowercase) -> steam_id
 TG_TO_STEAM = {tg.lower(): sid for tg, sid in PLAYERS.items()}
+
+DISCORD_TOKEN      = ""  # Установить в переменных окружения Railway
+DISCORD_CHANNEL_ID = 680782297162973263
