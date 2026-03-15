@@ -12,7 +12,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 
 import os
-from config import PLAYERS, DISCORD_TO_STEAM, HOST_ID
+from config import DISCORD_TO_STEAM, DISCORD_USER_IDS, HOST_ID
 from steam import (
     fetch_hero_names, fetch_item_names,
     get_last_match_id, get_match_details,
@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 DISCORD_TOKEN      = os.environ.get("DISCORD_TOKEN", "")
 DISCORD_CHANNEL_ID = 680782297162973263
 
-# Discord username (lowercase) -> display name для пингов/списков
-# Берём ключи из DISCORD_TO_STEAM — это и есть наши игроки в Discord
 DISCORD_USERNAMES = list(DISCORD_TO_STEAM.keys())
 
 reported_matches: set[str] = set()
@@ -40,17 +38,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
-def strip_html(text: str) -> str:
-    """Убираем HTML теги для Discord — там используется markdown."""
-    return (text
-        .replace("<b>", "**").replace("</b>", "**")
-        .replace("<i>", "*").replace("</i>", "*")
-        .replace("<a href=\"tg://user?id=0\">", "").replace("</a>", "")
-    )
-
 def discord_players_list() -> str:
-    """Список игроков по Discord username'ам (не TG-тегам)."""
-    return " ".join(f"@{u}" for u in DISCORD_USERNAMES)
+    """Настоящие пинги всех игроков через <@user_id>."""
+    return " ".join(f"<@{uid}>" for uid in DISCORD_USER_IDS.values())
 
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
     delays = [5, 15, 30]
@@ -76,14 +66,11 @@ async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
     try:
-        # Сначала синхронизируем глобально
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} slash commands globally")
-        # Потом для каждого сервера отдельно — команды появляются мгновенно
+        # Guild sync — команды появляются мгновенно (не ждём часами)
         for guild in bot.guilds:
             bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            logger.info(f"Synced slash commands to guild: {guild.name}")
+            synced = await bot.tree.sync(guild=guild)
+            logger.info(f"Synced {len(synced)} slash commands to guild: {guild.name}")
     except Exception as e:
         logger.error(f"Failed to sync slash commands: {e}")
 
@@ -128,10 +115,10 @@ async def monitor_loop():
         if our_count < 2:
             return
 
-        msg = format_match_message(match)
+        msg = format_match_message(match, platform="discord")
         if msg:
             reported_matches.add(mid)
-            await channel.send(strip_html(msg))
+            await channel.send(msg)
             logger.info(f"Discord: reported match {mid}")
 
 
@@ -140,7 +127,7 @@ async def monitor_loop():
 @bot.tree.command(name="dota", description="⚔️ Позвать всех играть в Dota 2")
 async def slash_dota(interaction: discord.Interaction):
     tags = discord_players_list()
-    msg = await interaction.response.send_message(
+    await interaction.response.send_message(
         f"⚔️ **{interaction.user.display_name} зовёт в Dota 2!**\n\n"
         f"👥 {tags}\n\n"
         f"Реагируйте: ✅ иду / ❌ не могу"
@@ -184,9 +171,9 @@ async def slash_lastmatch(interaction: discord.Interaction):
             await interaction.edit_original_response(content="❌ Не удалось получить детали матча.")
             return
 
-        result = format_match_message(match)
+        result = format_match_message(match, platform="discord")
         if result:
-            await interaction.edit_original_response(content=strip_html(result))
+            await interaction.edit_original_response(content=result)
         else:
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
@@ -216,24 +203,24 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
             await interaction.edit_original_response(content="❌ Матч не найден. Попробуй позже.")
             return
 
-        result = format_match_message(match)
+        result = format_match_message(match, platform="discord")
         if result:
-            await interaction.edit_original_response(content=strip_html(result))
+            await interaction.edit_original_response(content=result)
         else:
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
 
 @bot.tree.command(name="roulette", description="🎰 Кто аутист дня?")
 async def slash_roulette(interaction: discord.Interaction):
-    victim = random.choice(DISCORD_USERNAMES)
+    uid = random.choice(list(DISCORD_USER_IDS.values()))
     await interaction.response.send_message(
-        f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** @{victim}"
+        f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** <@{uid}>"
     )
 
 
 @bot.tree.command(name="players", description="👥 Список игроков")
 async def slash_players(interaction: discord.Interaction):
-    lines = "\n".join(f"{i+1}. `{u}`" for i, u in enumerate(DISCORD_USERNAMES))
+    lines = "\n".join(f"{i+1}. <@{uid}>" for i, uid in enumerate(DISCORD_USER_IDS.values()))
     await interaction.response.send_message(f"🎮 **Игроки:**\n{lines}")
 
 
@@ -248,99 +235,3 @@ async def slash_help(interaction: discord.Interaction):
         "`/players` — список игроков\n",
         ephemeral=True
     )
-
-
-# ─── старые prefix-команды (оставляем для совместимости) ─────────────────────
-
-@bot.command(name="dota")
-async def cmd_dota(ctx):
-    tags = discord_players_list()
-    sent = await ctx.send(
-        f"⚔️ **{ctx.author.display_name} зовёт в Dota 2!**\n\n"
-        f"👥 {tags}\n\n"
-        f"Реагируйте: ✅ иду / ❌ не могу"
-    )
-    await sent.add_reaction("✅")
-    await sent.add_reaction("❌")
-
-
-@bot.command(name="lastmatch")
-async def cmd_lastmatch(ctx):
-    username = ctx.author.name.lower()
-    steam_id = DISCORD_TO_STEAM.get(username)
-
-    if not steam_id:
-        players_list = ", ".join(f"`{u}`" for u in DISCORD_USERNAMES)
-        await ctx.send(
-            f"❌ `{ctx.author.display_name}` не в списке игроков.\n"
-            f"Список: {players_list}"
-        )
-        return
-
-    status_msg = await ctx.send(f"🔍 Ищу последний матч **{ctx.author.display_name}**...")
-
-    async with aiohttp.ClientSession() as session:
-        await fetch_hero_names(session)
-        await fetch_item_names(session)
-        mid = await get_last_match_id(session, steam_id)
-        if not mid:
-            await status_msg.edit(content="❌ Не удалось найти матч.")
-            return
-
-        await request_parse(session, mid)
-
-        async def update_status(text):
-            await status_msg.edit(content=text)
-
-        match = await wait_for_match(session, mid, update_status)
-        if not match:
-            await status_msg.edit(content="❌ Не удалось получить детали матча.")
-            return
-
-        result = format_match_message(match)
-        if result:
-            await status_msg.delete()
-            await ctx.send(strip_html(result))
-        else:
-            await status_msg.edit(content="😕 Не удалось сформировать сообщение.")
-
-
-@bot.command(name="analyze")
-async def cmd_analyze(ctx, match_id: str = None):
-    if not match_id or not match_id.isdigit():
-        await ctx.send("Использование: `!analyze 8726314725`")
-        return
-
-    status_msg = await ctx.send(f"🔍 Загружаю матч **#{match_id}**...")
-
-    async with aiohttp.ClientSession() as session:
-        await fetch_hero_names(session)
-        await fetch_item_names(session)
-        await request_parse(session, match_id)
-
-        async def update_status(text):
-            await status_msg.edit(content=text)
-
-        match = await wait_for_match(session, match_id, update_status)
-        if not match:
-            await status_msg.edit(content="❌ Матч не найден. Попробуй позже.")
-            return
-
-        result = format_match_message(match)
-        if result:
-            await status_msg.delete()
-            await ctx.send(strip_html(result))
-        else:
-            await status_msg.edit(content="😕 Не удалось сформировать сообщение.")
-
-
-@bot.command(name="roulette")
-async def cmd_roulette(ctx):
-    victim = random.choice(DISCORD_USERNAMES)
-    await ctx.send(f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** @{victim}")
-
-
-@bot.command(name="players")
-async def cmd_players(ctx):
-    lines = "\n".join(f"{i+1}. `{u}`" for i, u in enumerate(DISCORD_USERNAMES))
-    await ctx.send(f"🎮 **Игроки:**\n{lines}")
