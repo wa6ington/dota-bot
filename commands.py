@@ -43,6 +43,29 @@ def format_two_timezones(time_str: str) -> str:
 async def group_only(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
 
+
+# ─── smart parse wait ────────────────────────────────────────────────────────
+
+async def wait_for_match(session, match_id: str, send_status) -> dict | None:
+    """
+    Пробует получить матч до 3 раз с паузами 5 / 15 / 30 сек.
+    Считает матч готовым если у хотя бы одного игрока есть предметы.
+    """
+    delays = [5, 15, 30]
+    for attempt, delay in enumerate(delays, start=1):
+        await send_status(f"⏳ Ожидаю ответа от OpenDota... (попытка {attempt}/3)")
+        await asyncio.sleep(delay)
+        match = await get_match_details(session, match_id)
+        if not match:
+            continue
+        has_items = any(
+            p.get("item_0") or p.get("item_1") or p.get("item_2")
+            for p in match.get("players", [])
+        )
+        if has_items:
+            return match
+    return await get_match_details(session, match_id)
+
 def all_mentions() -> str:
     return " ".join(f"@{u}" for u in DEFAULT_TAGS)
 
@@ -153,9 +176,7 @@ async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Не удалось найти матч.")
             return
         await request_parse(session, mid)
-        await update.message.reply_text("⏳ Ожидаю ответа от OpenDota (~30 сек)...")
-        await asyncio.sleep(30)
-        match = await get_match_details(session, mid)
+        match = await wait_for_match(session, mid, update.message.reply_text)
         if not match:
             await update.message.reply_text("❌ Не удалось получить детали матча.")
             return
@@ -179,9 +200,7 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await fetch_hero_names(session)
         await fetch_item_names(session)
         await request_parse(session, match_id)
-        await update.message.reply_text("⏳ Ожидаю ответа от OpenDota (~30 сек)...")
-        await asyncio.sleep(30)
-        match = await get_match_details(session, match_id)
+        match = await wait_for_match(session, match_id, update.message.reply_text)
         if not match:
             await update.message.reply_text("❌ Матч не найден. Попробуй позже.")
             return
