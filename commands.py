@@ -94,7 +94,7 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
         "🎮 <b>Dota 2 Bot</b>\n\n"
         "/dota — позвать всех прямо сейчас\n"
         "/schedule 21:00 — запланировать игру (время Алматы)\n"
-        "/lastmatch — твой последний матч\n"
+        "/lastmatch [игрок] — твой или чужой последний матч\n"
         "/analyze 123456 — разбор любого матча\n"
         "/roulette — кто аутист?\n"
         "/players — список игроков\n"
@@ -154,19 +154,27 @@ async def cmd_roulette(update: Update, _: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
 
-async def cmd_lastmatch(update: Update, _: ContextTypes.DEFAULT_TYPE):
+async def cmd_lastmatch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await group_only(update): return
-    user     = update.effective_user
-    username = (user.username or "").lower()
 
-    steam_id = TG_TO_STEAM.get(username)
+    # Если передан аргумент — ищем его, иначе берём себя
+    if ctx.args:
+        # Убираем @ если есть, приводим к нижнему регистру
+        target_name = ctx.args[0].lstrip("@").lower()
+    else:
+        user = update.effective_user
+        target_name = (user.username or "").lower()
+
+    steam_id = TG_TO_STEAM.get(target_name)
     if not steam_id:
+        players_list = ", ".join(f"@{u}" for u in PLAYERS)
         await update.message.reply_text(
-            f"❌ @{user.username or user.first_name} не в списке игроков.\n"
-            f"Список: {', '.join('@'+u for u in PLAYERS)}"
+            f"❌ @{target_name} не в списке игроков.\n"
+            f"Список: {players_list}"
         )
         return
 
+    username = target_name
     await update.message.reply_text(f"🔍 Ищу последний матч @{username}...")
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)

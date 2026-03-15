@@ -137,21 +137,23 @@ async def slash_dota(interaction: discord.Interaction):
     await sent.add_reaction("❌")
 
 
-@bot.tree.command(name="lastmatch", description="🔍 Показать твой последний матч в Dota 2")
-async def slash_lastmatch(interaction: discord.Interaction):
-    username = interaction.user.name.lower()
+@bot.tree.command(name="lastmatch", description="🔍 Показать последний матч в Dota 2")
+@app_commands.describe(user="Упомяни игрока (@ник) или оставь пустым для себя")
+async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member = None):
+    target   = user if user else interaction.user
+    username = target.name.lower()
     steam_id = DISCORD_TO_STEAM.get(username)
 
     if not steam_id:
         players_list = ", ".join(f"`{u}`" for u in DISCORD_USERNAMES)
         await interaction.response.send_message(
-            f"❌ `{interaction.user.display_name}` не в списке игроков.\n"
+            f"❌ `{target.display_name}` не в списке игроков.\n"
             f"Список: {players_list}",
             ephemeral=True
         )
         return
 
-    await interaction.response.send_message(f"🔍 Ищу последний матч **{interaction.user.display_name}**...")
+    await interaction.response.send_message(f"🔍 Ищу последний матч **{target.display_name}**...")
 
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
@@ -229,7 +231,7 @@ async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
         "`/dota` — позвать всех играть\n"
-        "`/lastmatch` — твой последний матч\n"
+        "`/lastmatch [@игрок]` — твой или чужой последний матч\n"
         "`/analyze` — анализ матча по ID\n"
         "`/roulette` — кто аутист дня?\n"
         "`/players` — список игроков\n",
