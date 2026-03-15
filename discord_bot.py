@@ -66,11 +66,9 @@ async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
     try:
-        # Очищаем глобальные команды (они дублируют guild-команды)
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-        # Регистрируем только на guild — появляются мгновенно
+        # Guild sync — команды появляются мгновенно (не ждём часами)
         for guild in bot.guilds:
+            bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
             logger.info(f"Synced {len(synced)} slash commands to guild: {guild.name}")
     except Exception as e:
