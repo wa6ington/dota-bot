@@ -51,7 +51,8 @@ def strip_html(text: str) -> str:
 
 def discord_players_list() -> str:
     """Список игроков по Discord username'ам (не TG-тегам)."""
-    return " ".join(f"@{u}" for u in DISCORD_USERNAMES)
+    from config import DISCORD_USER_IDS
+    return " ".join(f"<@{uid}>" for uid in DISCORD_USER_IDS.values())
 
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
     delays = [5, 15, 30]

@@ -29,3 +29,11 @@ DISCORD_TO_STEAM = {
     "tawer4k":      PLAYERS["Tawer4K"],
     ".alexandrov":  PLAYERS["neskvikcpivom2"],
 }
+# Discord username (lowercase) -> Discord User ID (для пингов через <@ID>)
+DISCORD_USER_IDS = {
+    "foryou4022":   457572146345017366,  # limon1705
+    "wa6ington":    428229894342967297,  # wa6ingtonn
+    "rbayka":       153584815336062976,  # areembee
+    "tawer4k":      595244909020053526,  # Tawer4K
+    ".alexandrov":  724191471795699754,  # neskvikcpivom2
+}
