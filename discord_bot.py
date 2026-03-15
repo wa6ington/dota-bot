@@ -13,6 +13,7 @@ from discord import app_commands
 
 import os
 from config import DISCORD_TO_STEAM, DISCORD_USER_IDS, HOST_ID
+from commands import format_two_timezones
 from steam import (
     fetch_hero_names, fetch_item_names,
     get_last_match_id, get_match_details,
@@ -178,9 +179,16 @@ async def slash_dota(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="schedule", description="📅 Запланировать игру на определённое время")
-@app_commands.describe(time="Время в формате 21:00 (Алматы)")
+@app_commands.describe(time="Например: 21:00 kz  или  19:00 msk")
 async def slash_schedule(interaction: discord.Interaction, time: str):
-    view = VoteView(caller_name=interaction.user.display_name, time_str=time)
+    formatted = format_two_timezones(time)
+    if formatted is None:
+        await interaction.response.send_message(
+            "❌ Неверный формат времени.\nПримеры: `21:00 kz` · `19:00 msk` · `21 00 кз`",
+            ephemeral=True
+        )
+        return
+    view = VoteView(caller_name=interaction.user.display_name, time_str=formatted)
     await interaction.response.send_message(content=view.build_text(), view=view)
 
 

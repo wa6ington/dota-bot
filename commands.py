@@ -17,25 +17,53 @@ sessions: dict[int, dict] = {}
 
 # ─── timezone helpers ─────────────────────────────────────────────────────────
 
-def format_two_timezones(time_str: str) -> str:
+def format_two_timezones(time_str: str) -> str | None:
     """
-    Принимает время в формате HH:MM (считается МСК, UTC+3).
-    Возвращает строку вида "21:00 МСК / 23:00 Алматы".
-    Если формат неверный — возвращает исходную строку как есть.
+    Принимает строку вида:
+      "21:00", "21 00"            — считается Алматы (UTC+5, по умолчанию)
+      "21:00 kz", "21 00 алматы"  — явно Алматы
+      "19:00 msk", "19 00 мск"    — явно МСК (UTC+3), конвертируем +2ч -> Алматы
+    Возвращает строку вида "21:00 Алматы / 19:00 МСК".
+    При невалидном вводе возвращает None.
     """
+    MSK_ALIASES = {"msk", "мск", "москва", "moscow"}
+    KZ_ALIASES  = {"kz", "кз", "алматы", "almaty", "казахстан"}
+
     try:
-        parts = time_str.strip().split(":")
-        if len(parts) != 2:
-            return time_str
-        hours = int(parts[0])
-        minutes = int(parts[1])
+        parts = time_str.strip().lower().split()
+
+        # Суффикс пояса обязателен
+        if len(parts) < 2 or parts[-1] not in MSK_ALIASES | KZ_ALIASES:
+            return None
+
+        if parts[-1] in MSK_ALIASES:
+            tz = "msk"
+        else:
+            tz = "kz"
+        parts = parts[:-1]
+
+        # Нормализуем "21 00" -> "21:00"
+        time_part = parts[0] if len(parts) == 1 else ":".join(parts[:2])
+        hm = time_part.split(":")
+        if len(hm) != 2:
+            return None
+
+        hours   = int(hm[0])
+        minutes = int(hm[1])
         if not (0 <= hours <= 23 and 0 <= minutes <= 59):
-            return time_str
-        # МСК = Алматы - 2 часа
-        msk_hours = (hours - 2) % 24
-        return f"{hours:02d}:{minutes:02d} Алматы / {msk_hours:02d}:{minutes:02d} МСК"
+            return None
+
+        if tz == "msk":
+            alm_hours = (hours + 2) % 24
+            msk_hours = hours
+        else:
+            alm_hours = hours
+            msk_hours = (hours - 2) % 24
+
+        return f"{alm_hours:02d}:{minutes:02d} Алматы / {msk_hours:02d}:{minutes:02d} МСК"
+
     except (ValueError, IndexError):
-        return time_str
+        return None
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -112,9 +140,6 @@ async def _start_session(update: Update, time_str: str | None):
     chat_id = update.effective_chat.id
     caller  = update.effective_user
 
-    # Если передано время — форматируем с двумя поясами
-    display_time = format_two_timezones(time_str) if time_str else None
-
     sessions[chat_id] = {
         "caller":    caller.full_name or caller.username or str(caller.id),
         "caller_id": caller.id,
@@ -122,7 +147,7 @@ async def _start_session(update: Update, time_str: str | None):
         "no_names":  [],
         "yes_ids":   set(),
         "no_ids":    set(),
-        "time": display_time,
+        "time": time_str,  # уже отформатировано в cmd_schedule
     }
     await update.message.reply_text(all_mentions())
     await update.message.reply_text(session_text(sessions[chat_id]), parse_mode="HTML", reply_markup=vote_kb())
@@ -131,9 +156,13 @@ async def cmd_dota(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await _start_session(update, None)
 
 async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    time_str = " ".join(ctx.args) if ctx.args else None
-    if not time_str:
-        await update.message.reply_text("Использование: /schedule 21:00  (время Алматы)")
+    raw = " ".join(ctx.args) if ctx.args else None
+    if not raw:
+        await update.message.reply_text("Использование: /schedule 21:00 kz  или  /schedule 19:00 msk")
+        return
+    time_str = format_two_timezones(raw)
+    if time_str is None:
+        await update.message.reply_text("❌ Неверный формат времени.\nПримеры: /schedule 21:00 kz · /schedule 19:00 msk · /schedule 21 00 кз")
         return
     await _start_session(update, time_str)
 
