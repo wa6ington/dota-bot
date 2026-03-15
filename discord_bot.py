@@ -114,8 +114,6 @@ async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
     try:
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
         for guild in bot.guilds:
             bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
