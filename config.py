@@ -20,3 +20,12 @@ TG_TO_STEAM = {tg.lower(): sid for tg, sid in PLAYERS.items()}
 
 DISCORD_TOKEN      = ""  # Установить в переменных окружения Railway
 DISCORD_CHANNEL_ID = 680782297162973263
+
+# Discord username (lowercase) -> steam_id
+DISCORD_TO_STEAM = {
+    "foryou4022":   PLAYERS["limon1705"],
+    "wa6ington":    PLAYERS["wa6ingtonn"],
+    "rbayka":       PLAYERS["areembee"],
+    "tawer4k":      PLAYERS["Tawer4K"],
+    ".alexandrov":  PLAYERS["neskvikcpivom2"],
+}

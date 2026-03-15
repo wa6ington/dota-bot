@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands, tasks
 
 import os
-from config import PLAYERS, DEFAULT_TAGS, TG_TO_STEAM, HOST_ID, STEAM_API_KEY
+from config import PLAYERS, DEFAULT_TAGS, TG_TO_STEAM, DISCORD_TO_STEAM, HOST_ID, STEAM_API_KEY
 from steam import (
     fetch_hero_names, fetch_item_names,
     get_last_match_id, get_match_details,
@@ -136,7 +136,7 @@ async def cmd_dota(ctx):
 async def cmd_lastmatch(ctx):
     """🔍 Последний матч того кто написал"""
     username = ctx.author.name.lower()
-    steam_id = TG_TO_STEAM.get(username)
+    steam_id = DISCORD_TO_STEAM.get(username)
 
     if not steam_id:
         players_list = ", ".join(f"@{u}" for u in PLAYERS)
