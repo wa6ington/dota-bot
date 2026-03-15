@@ -1,1 +1,1 @@
-worker: python clear_commands.py
+worker: python main.py
