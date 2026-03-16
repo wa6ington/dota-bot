@@ -172,19 +172,19 @@ async def monitor_loop():
 
 # ─── slash-команды ────────────────────────────────────────────────────────────
 
-@bot.tree.command(name="dota", description="⚔️ Позвать всех играть в Dota 2")
+@bot.tree.command(name="dota", description="⚔️ Позвать всех прямо сейчас")
 async def slash_dota(interaction: discord.Interaction):
     view = VoteView(caller_name=interaction.user.display_name)
     await interaction.response.send_message(content=view.build_text(), view=view)
 
 
 @bot.tree.command(name="schedule", description="📅 Запланировать игру на определённое время")
-@app_commands.describe(time="Например: 21:00 kz  или  19:00 msk")
+@app_commands.describe(time="Например: 21:00 KZ  или  19:00 MSK")
 async def slash_schedule(interaction: discord.Interaction, time: str):
     formatted = format_two_timezones(time)
     if formatted is None:
         await interaction.response.send_message(
-            "❌ Неверный формат времени.\nПримеры: `21:00 kz` · `19:00 msk` · `21 00 кз`",
+            "❌ Неверный формат времени.\nПримеры: `21:00 kz` · `19:00 msk`",
             ephemeral=True
         )
         return
@@ -263,7 +263,7 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
 
-@bot.tree.command(name="roulette", description="🎰 Кто аутист дня?")
+@bot.tree.command(name="roulette", description="🎰 Кто аутист?")
 async def slash_roulette(interaction: discord.Interaction):
     uid = random.choice(list(DISCORD_USER_IDS.values()))
     await interaction.response.send_message(f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** <@{uid}>")
@@ -279,11 +279,11 @@ async def slash_players(interaction: discord.Interaction):
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
-        "`/dota` — позвать всех прямо сейчас\n"
-        "`/schedule 21:00 KZ` — запланировать игру (указать пояс(КЗ/МСК))\n"
-        "`/lastmatch [игрок]` — твой или чужой последний матч\n"
-        "`/analyze 123456` — разбор любого матча\n"
-        "`/roulette` — кто аутист?\n"
-        "`/players` — список игроков\n",
+        "`/dota` — Позвать всех прямо сейчас\n"
+        "`/schedule 21:00 KZ` — Запланировать игру (указать пояс(КЗ/МСК))\n"
+        "`/lastmatch [игрок]` — Упомяни игрока или оставь пустым для себя\n"
+        "`/analyze ID` — Разбор любого матча\n"
+        "`/roulette` — Кто аутист?\n"
+        "`/players` — Список игроков\n",
         ephemeral=True
     )

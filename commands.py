@@ -27,7 +27,7 @@ def format_two_timezones(time_str: str) -> str | None:
     При невалидном вводе возвращает None.
     """
     MSK_ALIASES = {"msk", "мск", "москва", "moscow"}
-    KZ_ALIASES  = {"kz", "кз", "алматы", "almaty", "казахстан"}
+    KZ_ALIASES  = {"kz", "кз", "алматы", "almaty"}
 
     try:
         parts = time_str.strip().lower().split()
@@ -120,13 +120,13 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     if not await group_only(update): return
     await update.message.reply_text(
         "🎮 <b>Dota 2 Bot</b>\n\n"
-        "/dota — позвать всех прямо сейчас\n"
-        "/schedule 21:00 KZ — запланировать игру (указать пояс(КЗ/МСК))\n"
-        "/lastmatch [игрок] — твой или чужой последний матч\n"
-        "/analyze 123456 — разбор любого матча\n"
-        "/roulette — кто аутист?\n"
-        "/players — список игроков\n"
-        "/cancel — отменить сессию",
+        "/dota — Позвать всех прямо сейчас\n"
+        "/schedule 21:00 KZ — Запланировать игру (указать пояс(КЗ/МСК))\n"
+        "/lastmatch [игрок] — Упомяни игрока или оставь пустым для себя\n"
+        "/analyze ID — Разбор любого матча\n"
+        "/roulette — Кто аутист?\n"
+        "/players — Список игроков\n"
+        "/cancel — Отменить сессию",
         parse_mode="HTML",
     )
 
