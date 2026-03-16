@@ -8,6 +8,7 @@ PLAYERS = {
     "areembee":       "76561198385353313",
     "Tawer4K":        "76561198841600203",
     "neskvikcpivom2": "76561199004933239",
+    "beekssus":       "76561198881056614",
 }
 
 HOST_TG  = "wa6ingtonn"
@@ -28,6 +29,7 @@ DISCORD_TO_STEAM = {
     "rbayka":       PLAYERS["areembee"],
     "tawer4k":      PLAYERS["Tawer4K"],
     ".alexandrov":  PLAYERS["neskvikcpivom2"],
+    "beekssus":     PLAYERS["beekssus"],
 }
 # Discord username (lowercase) -> Discord User ID (для пингов через <@ID>)
 DISCORD_USER_IDS = {
@@ -36,4 +38,5 @@ DISCORD_USER_IDS = {
     "rbayka":       153584815336062976,  # areembee
     "tawer4k":      595244909020053526,  # Tawer4K
     ".alexandrov":  724191471795699754,  # neskvikcpivom2
+    "beekssus":     1129795182989148251, # beekssus
 }
