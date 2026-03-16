@@ -114,6 +114,9 @@ class VoteView(discord.ui.View):
 async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
+    await bot.change_presence(
+    activity=discord.Activity(type=discord.ActivityType.listening, name="Команды через /"))
+
     try:
         for guild in bot.guilds:
             bot.tree.copy_global_to(guild=guild)
