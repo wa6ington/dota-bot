@@ -19,6 +19,7 @@ DEFAULT_TAGS = list(PLAYERS.keys())
 # Telegram username (lowercase) -> steam_id
 TG_TO_STEAM = {tg.lower(): sid for tg, sid in PLAYERS.items()}
 
+# Discord
 DISCORD_TOKEN      = ""  # Установить в переменных окружения Railway
 DISCORD_CHANNEL_ID = 680782297162973263
 
@@ -31,12 +32,16 @@ DISCORD_TO_STEAM = {
     ".alexandrov":  PLAYERS["neskvikcpivom2"],
     "beekssus":     PLAYERS["beekssus"],
 }
-# Discord username (lowercase) -> Discord User ID (для пингов через <@ID>)
+
+# Discord username -> Discord User ID (для пингов <@ID>)
 DISCORD_USER_IDS = {
-    "foryou4022":   457572146345017366,  # limon1705
-    "wa6ington":    428229894342967297,  # wa6ingtonn
-    "rbayka":       153584815336062976,  # areembee
-    "tawer4k":      595244909020053526,  # Tawer4K
-    ".alexandrov":  724191471795699754,  # neskvikcpivom2
-    "beekssus":     1129795182989148251, # beekssus
+    "foryou4022":   457572146345017366,
+    "wa6ington":    428229894342967297,
+    "rbayka":       153584815336062976,
+    "tawer4k":      595244909020053526,
+    ".alexandrov":  724191471795699754,
+    "beekssus":     1129795182989148251,
 }
+
+# Gemini AI
+GEMINI_API_KEY = ""  # Установить в переменных окружения Railway

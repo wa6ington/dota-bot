@@ -12,7 +12,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from config import TOKEN
 from commands import (
     cmd_start, cmd_players, cmd_dota, cmd_schedule,
-    cmd_cancel, cmd_roulette, cmd_lastmatch, cmd_analyze, on_vote
+    cmd_cancel, cmd_roulette, cmd_lastmatch, cmd_analyze, cmd_draft, on_vote
 )
 from monitor import monitor_matches
 
@@ -35,6 +35,7 @@ def run_telegram():
     app.add_handler(CommandHandler("roulette",  cmd_roulette))
     app.add_handler(CommandHandler("lastmatch", cmd_lastmatch))
     app.add_handler(CommandHandler("analyze",   cmd_analyze))
+    app.add_handler(CommandHandler("draft",     cmd_draft))
     app.add_handler(CallbackQueryHandler(on_vote, pattern="^vote_"))
     logger.info("🎮 Telegram ErniFidBot запущен!")
     app.run_polling()

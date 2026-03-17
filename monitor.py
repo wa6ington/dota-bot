@@ -2,9 +2,10 @@ import logging
 import asyncio
 import aiohttp
 
-from config import ALLOWED_CHAT_ID, HOST_ID
+from config import ALLOWED_CHAT_ID, HOST_ID, PLAYERS
 from steam import fetch_hero_names, fetch_item_names, get_last_match_id, get_match_details, request_parse, count_our_players
 from formatter import format_match_message
+from ai_advisor import get_draft_advice, parse_draft
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,26 @@ async def monitor_matches(app):
                     reported_matches.add(mid)
                     await app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=msg, parse_mode="HTML")
                     logger.info(f"Reported match {mid}")
+
+                    # Анализ драфта через Gemini
+                    try:
+                        from steam import HERO_NAMES
+                        our_heroes, enemy_heroes = parse_draft(match, set(PLAYERS.values()), HERO_NAMES)
+                        if our_heroes and enemy_heroes:
+                            await app.bot.send_message(
+                                chat_id=ALLOWED_CHAT_ID,
+                                text="⏳ Анализирую драфт...",
+                                parse_mode="HTML"
+                            )
+                            advice = await get_draft_advice(our_heroes, enemy_heroes)
+                            if advice:
+                                await app.bot.send_message(
+                                    chat_id=ALLOWED_CHAT_ID,
+                                    text="🧠 <b>Анализ драфта:</b>\n\n" + advice,
+                                    parse_mode="HTML"
+                                )
+                    except Exception as e:
+                        logger.warning(f"Draft advice error: {e}")
 
             except Exception as e:
                 logger.error(f"Monitor error: {e}")

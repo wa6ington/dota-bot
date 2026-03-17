@@ -6,8 +6,8 @@ import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_CHAT_ID, PLAYERS, DEFAULT_TAGS, TG_TO_STEAM, HOST_ID
-from steam import fetch_hero_names, fetch_item_names, get_last_match_id, get_match_details, request_parse, count_our_players
+from config import ALLOWED_CHAT_ID, PLAYERS, DEFAULT_TAGS, TG_TO_STEAM
+from steam import fetch_hero_names, fetch_item_names, get_last_match_id, get_match_details, request_parse
 from formatter import format_match_message
 
 logger = logging.getLogger(__name__)
@@ -15,41 +15,26 @@ logger = logging.getLogger(__name__)
 sessions: dict[int, dict] = {}
 
 
-# ─── timezone helpers ─────────────────────────────────────────────────────────
+# ─── timezone helpers ────────────────────────────────────────────────────────
 
 def format_two_timezones(time_str: str) -> str | None:
-    """
-    Принимает строку вида:
-      "21:00", "21 00"            — считается Алматы (UTC+5, по умолчанию)
-      "21:00 kz", "21 00 алматы"  — явно Алматы
-      "19:00 msk", "19 00 мск"    — явно МСК (UTC+3), конвертируем +2ч -> Алматы
-    Возвращает строку вида "21:00 Алматы / 19:00 МСК".
-    При невалидном вводе возвращает None.
-    """
     MSK_ALIASES = {"msk", "мск", "москва", "moscow"}
     KZ_ALIASES  = {"kz", "кз", "алматы", "almaty"}
 
     try:
         parts = time_str.strip().lower().split()
-
-        # Суффикс пояса обязателен
         if len(parts) < 2 or parts[-1] not in MSK_ALIASES | KZ_ALIASES:
             return None
 
-        if parts[-1] in MSK_ALIASES:
-            tz = "msk"
-        else:
-            tz = "kz"
+        tz    = "msk" if parts[-1] in MSK_ALIASES else "kz"
         parts = parts[:-1]
 
-        # Нормализуем "21 00" -> "21:00"
         time_part = parts[0] if len(parts) == 1 else ":".join(parts[:2])
         hm = time_part.split(":")
         if len(hm) != 2:
             return None
 
-        hours   = int(hm[0])
-        minutes = int(hm[1])
+        hours, minutes = int(hm[0]), int(hm[1])
         if not (0 <= hours <= 23 and 0 <= minutes <= 59):
             return None
 
@@ -61,7 +46,6 @@ def format_two_timezones(time_str: str) -> str | None:
             msk_hours = (hours - 2) % 24
 
         return f"{alm_hours:02d}:{minutes:02d} Алматы / {msk_hours:02d}:{minutes:02d} МСК"
-
     except (ValueError, IndexError):
         return None
 
@@ -71,14 +55,7 @@ def format_two_timezones(time_str: str) -> str | None:
 async def group_only(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
 
-
-# ─── smart parse wait ────────────────────────────────────────────────────────
-
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
-    """
-    Пробует получить матч до 3 раз с паузами 5 / 15 / 30 сек.
-    Считает матч готовым если у хотя бы одного игрока есть предметы.
-    """
     delays = [5, 15, 30]
     for attempt, delay in enumerate(delays, start=1):
         await send_status(f"⏳ Ожидаю ответа от OpenDota... (попытка {attempt}/3)")
@@ -114,6 +91,7 @@ def vote_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton("❌ Не могу", callback_data="vote_no"),
     ]])
 
+
 # ─── команды ─────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
@@ -121,9 +99,10 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎮 <b>Dota 2 Bot</b>\n\n"
         "/dota — Позвать всех прямо сейчас\n"
-        "/schedule 21:00 KZ — Запланировать игру (указать пояс(КЗ/МСК))\n"
-        "/lastmatch [игрок] — Упомяни игрока или оставь пустым для себя\n"
+        "/schedule 21:00 kz — Запланировать игру\n"
+        "/lastmatch [игрок] — Последний матч\n"
         "/analyze ID — Разбор любого матча\n"
+        "/draft zeus pudge — Анализ драфта AI\n"
         "/roulette — Кто аутист?\n"
         "/players — Список игроков\n"
         "/cancel — Отменить сессию",
@@ -139,7 +118,6 @@ async def _start_session(update: Update, time_str: str | None):
     if not await group_only(update): return
     chat_id = update.effective_chat.id
     caller  = update.effective_user
-
     sessions[chat_id] = {
         "caller":    caller.full_name or caller.username or str(caller.id),
         "caller_id": caller.id,
@@ -147,7 +125,7 @@ async def _start_session(update: Update, time_str: str | None):
         "no_names":  [],
         "yes_ids":   set(),
         "no_ids":    set(),
-        "time": time_str,  # уже отформатировано в cmd_schedule
+        "time": time_str,
     }
     await update.message.reply_text(all_mentions())
     await update.message.reply_text(session_text(sessions[chat_id]), parse_mode="HTML", reply_markup=vote_kb())
@@ -162,7 +140,7 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     time_str = format_two_timezones(raw)
     if time_str is None:
-        await update.message.reply_text("❌ Неверный формат времени.\nПримеры: /schedule 21:00 kz · /schedule 19:00 msk · /schedule 21 00 кз")
+        await update.message.reply_text("❌ Неверный формат. Примеры: /schedule 21:00 kz · /schedule 19:00 msk")
         return
     await _start_session(update, time_str)
 
@@ -185,10 +163,7 @@ async def cmd_roulette(update: Update, _: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_lastmatch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await group_only(update): return
-
-    # Если передан аргумент — ищем его, иначе берём себя
     if ctx.args:
-        # Убираем @ если есть, приводим к нижнему регистру
         target_name = ctx.args[0].lstrip("@").lower()
     else:
         user = update.effective_user
@@ -196,15 +171,13 @@ async def cmd_lastmatch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     steam_id = TG_TO_STEAM.get(target_name)
     if not steam_id:
-        players_list = ", ".join(f"@{u}" for u in PLAYERS)
         await update.message.reply_text(
             f"❌ @{target_name} не в списке игроков.\n"
-            f"Список: {players_list}"
+            f"Список: {', '.join('@'+u for u in PLAYERS)}"
         )
         return
 
-    username = target_name
-    await update.message.reply_text(f"🔍 Ищу последний матч @{username}...")
+    await update.message.reply_text(f"🔍 Ищу последний матч @{target_name}...")
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
         await fetch_item_names(session)
@@ -246,6 +219,23 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode="HTML")
         else:
             await update.message.reply_text("😕 Не удалось сформировать сообщение.")
+
+async def cmd_draft(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await group_only(update): return
+    if not ctx.args:
+        await update.message.reply_text("Использование: /draft invoker storm pudge lina\nВведи героев врагов через пробел")
+        return
+    enemy_heroes = [h.capitalize() for h in ctx.args]
+    await update.message.reply_text(f"🧠 Анализирую драфт против: {', '.join(enemy_heroes)}...")
+    from ai_advisor import get_draft_advice
+    advice = await get_draft_advice([], enemy_heroes)
+    if advice:
+        await update.message.reply_text(
+            "🧠 <b>Что собирать против " + ", ".join(enemy_heroes) + ":</b>\n\n" + advice,
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text("❌ Не удалось получить анализ. Попробуй позже.")
 
 async def on_vote(update: Update, _: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
