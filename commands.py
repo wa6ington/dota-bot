@@ -99,10 +99,10 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎮 <b>Dota 2 Bot</b>\n\n"
         "/dota — Позвать всех прямо сейчас\n"
-        "/schedule 21:00 kz — Запланировать игру\n"
-        "/lastmatch [игрок] — Последний матч\n"
+        "/schedule 21:00 KZ — Запланировать игру (указать пояс КЗ/МСК)\n"
+        "/lastmatch [игрок] — Упомяни игрока или оставь пустым для себя\n"
         "/analyze ID — Разбор любого матча\n"
-        "/draft zeus pudge — Анализ драфта AI\n"
+        "/draft invoker storm — AI анализ драфта\n"
         "/roulette — Кто аутист?\n"
         "/players — Список игроков\n"
         "/cancel — Отменить сессию",
@@ -140,7 +140,7 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     time_str = format_two_timezones(raw)
     if time_str is None:
-        await update.message.reply_text("❌ Неверный формат. Примеры: /schedule 21:00 kz · /schedule 19:00 msk")
+        await update.message.reply_text("❌ Неверный формат.\nПримеры: /schedule 21:00 kz · /schedule 19:00 msk · /schedule 21 00 кз")
         return
     await _start_session(update, time_str)
 
@@ -223,7 +223,7 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_draft(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await group_only(update): return
     if not ctx.args:
-        await update.message.reply_text("Использование: /draft invoker storm pudge lina\nВведи героев врагов через пробел")
+        await update.message.reply_text("Использование: /draft invoker storm pudge\nВведи героев врагов через пробел")
         return
     enemy_heroes = [h.capitalize() for h in ctx.args]
     await update.message.reply_text(f"🧠 Анализирую драфт против: {', '.join(enemy_heroes)}...")

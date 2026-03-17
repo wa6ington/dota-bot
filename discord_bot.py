@@ -108,7 +108,6 @@ class VoteView(discord.ui.View):
 async def on_ready():
     logger.info(f"Discord bot ready: {bot.user}")
     monitor_loop.start()
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="/помощь"))
     try:
         for guild in bot.guilds:
             bot.tree.copy_global_to(guild=guild)
@@ -141,6 +140,7 @@ async def monitor_loop():
             return
 
         if mid == last_known_match or mid in reported_matches:
+            logger.info(f"No new match (last={mid})")
             return
 
         logger.info(f"NEW match: {mid}")
@@ -153,12 +153,13 @@ async def monitor_loop():
         if not match or count_our_players(match) < 2:
             return
 
-        msg = format_match_message(match)
+        msg = format_match_message(match, platform="discord")
         if msg:
             reported_matches.add(mid)
             await channel.send(msg)
+            logger.info(f"Discord: reported match {mid}")
 
-            # Анализ драфта через Gemini
+            # AI анализ драфта
             try:
                 from steam import HERO_NAMES
                 our_heroes, enemy_heroes = parse_draft(match, set(PLAYERS.values()), HERO_NAMES)
@@ -178,11 +179,14 @@ async def slash_dota(interaction: discord.Interaction):
     await interaction.response.send_message(content=view.build_text(), view=view)
 
 @bot.tree.command(name="schedule", description="📅 Запланировать игру")
-@app_commands.describe(time="Например: 21:00 kz или 19:00 msk")
+@app_commands.describe(time="Например: 21:00 KZ или 19:00 MSK")
 async def slash_schedule(interaction: discord.Interaction, time: str):
     formatted = format_two_timezones(time)
     if formatted is None:
-        await interaction.response.send_message("❌ Неверный формат. Примеры: `21:00 kz` · `19:00 msk`", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Неверный формат.\nПримеры: `21:00 kz` · `19:00 msk`",
+            ephemeral=True
+        )
         return
     view = VoteView(caller_name=interaction.user.display_name, time_str=formatted)
     await interaction.response.send_message(content=view.build_text(), view=view)
@@ -220,9 +224,9 @@ async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member
             await interaction.edit_original_response(content="❌ Не удалось получить детали матча.")
             return
 
-        msg = format_match_message(match)
-        if msg:
-            await interaction.edit_original_response(content=msg)
+        result = format_match_message(match, platform="discord")
+        if result:
+            await interaction.edit_original_response(content=result)
         else:
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
@@ -247,9 +251,9 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
             await interaction.edit_original_response(content="❌ Матч не найден. Попробуй позже.")
             return
 
-        msg = format_match_message(match)
-        if msg:
-            await interaction.edit_original_response(content=msg)
+        result = format_match_message(match, platform="discord")
+        if result:
+            await interaction.edit_original_response(content=result)
         else:
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
@@ -257,7 +261,7 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
 @app_commands.describe(heroes="Герои врагов через пробел: invoker storm pudge")
 async def slash_draft(interaction: discord.Interaction, heroes: str):
     enemy_heroes = [h.capitalize() for h in heroes.split()]
-    await interaction.response.send_message(f"🧠 Анализирую драфт против: {', '.join(enemy_heroes)}...")
+    await interaction.response.send_message(f"🧠 Анализирую против: {', '.join(enemy_heroes)}...")
     advice = await get_draft_advice([], enemy_heroes)
     if advice:
         await interaction.edit_original_response(
@@ -266,7 +270,7 @@ async def slash_draft(interaction: discord.Interaction, heroes: str):
     else:
         await interaction.edit_original_response(content="❌ Не удалось получить анализ.")
 
-@bot.tree.command(name="roulette", description="🎰 Кто аутист дня?")
+@bot.tree.command(name="roulette", description="🎰 Кто аутист?")
 async def slash_roulette(interaction: discord.Interaction):
     uid = random.choice(list(DISCORD_USER_IDS.values()))
     await interaction.response.send_message(f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** <@{uid}>")
@@ -281,9 +285,9 @@ async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
         "`/dota` — Позвать всех прямо сейчас\n"
-        "`/schedule 21:00 kz` — Запланировать игру\n"
-        "`/lastmatch [игрок]` — Последний матч\n"
-        "`/analyze ID` — Разбор матча по ID\n"
+        "`/schedule 21:00 KZ` — Запланировать игру (указать пояс КЗ/МСК)\n"
+        "`/lastmatch [игрок]` — Упомяни игрока или оставь пустым для себя\n"
+        "`/analyze ID` — Разбор любого матча\n"
         "`/draft invoker storm` — AI анализ драфта\n"
         "`/roulette` — Кто аутист?\n"
         "`/players` — Список игроков",
