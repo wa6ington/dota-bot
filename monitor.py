@@ -37,9 +37,21 @@ async def monitor_matches(app):
                 last_known_match = mid
 
                 await request_parse(session, mid)
-                await asyncio.sleep(60)
 
-                match = await get_match_details(session, mid)
+                # Умное ожидание — проверяем каждые 5/15/30 сек пока не появятся предметы
+                match = None
+                for delay in [5, 15, 30, 60]:
+                    await asyncio.sleep(delay)
+                    match = await get_match_details(session, mid)
+                    if match:
+                        has_items = any(
+                            p.get("item_0") or p.get("item_1") or p.get("item_2")
+                            for p in match.get("players", [])
+                        )
+                        if has_items:
+                            break
+                        match = None
+
                 if not match:
                     logger.warning(f"Could not get match {mid}")
                     continue
@@ -51,7 +63,7 @@ async def monitor_matches(app):
                     logger.info("Less than 2 our players, skipping")
                     continue
 
-                msg = format_match_message(match)
+                msg = await format_match_message(match)
                 if msg:
                     reported_matches.add(mid)
                     await app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=msg, parse_mode="HTML")

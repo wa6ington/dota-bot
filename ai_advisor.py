@@ -94,3 +94,47 @@ def parse_draft(match: dict, our_steam_ids: set, hero_names: dict) -> tuple[list
             enemy_heroes.append(hero)
 
     return our_heroes, enemy_heroes
+
+
+async def get_player_position(hero: str, gpm: int, lh: int, items: str) -> str:
+    """Определяет позицию игрока через Gemini по герою, GPM, LH и предметам."""
+    import os
+    api_key = os.environ.get("GEMINI_API_KEY", GEMINI_API_KEY)
+    if not api_key:
+        return "?"
+
+    prompt = (
+        f"Ты эксперт по Dota 2. Определи позицию игрока (Pos 1/2/3/4/5) только по этим данным:\n"
+        f"Герой: {hero}\n"
+        f"GPM: {gpm}\n"
+        f"Last Hits: {lh}\n"
+        f"Предметы: {items}\n\n"
+        f"Ответь ТОЛЬКО одним из вариантов без объяснений:\n"
+        f"Pos 1 (Carry)\n"
+        f"Pos 2 (Mid)\n"
+        f"Pos 3 (Offlane)\n"
+        f"Pos 4 (Soft Support)\n"
+        f"Pos 5 (Hard Support)"
+    )
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 20, "temperature": 0.1}
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{GEMINI_URL}?key={api_key}",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                if r.status != 200:
+                    return "?"
+                data = await r.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                # Берём только первую строку
+                return text.split("\n")[0].strip()
+    except Exception as e:
+        logger.warning(f"Position detection error: {e}")
+        return "?"

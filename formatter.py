@@ -1,4 +1,5 @@
 import steam
+import asyncio
 from config import PLAYERS, DISCORD_TO_STEAM, DISCORD_USER_IDS
 from datetime import datetime, timezone, timedelta
 
@@ -35,15 +36,14 @@ def get_rank(rank_tier) -> str:
     return f"{medals.get(tier, '?')} {star}⭐"
 
 
-def get_position(p: dict) -> str:
-    """Позиция игрока по данным OpenDota (lane_role + is_roaming)."""
+def get_position_fallback(p: dict) -> str:
+    """Фолбек позиция по lane_role от OpenDota."""
     if p.get("is_roaming"):
         return "Роумер"
     mapping = {1: "Легкая", 2: "Мид", 3: "Сложная", 4: "Вне линии"}
     lane_role = p.get("lane_role")
     if lane_role in mapping:
         return mapping[lane_role]
-    # Фолбек по team_slot если lane_role нет
     team_slot = p.get("team_slot", 0)
     positions = {0: "Pos 1", 1: "Pos 2", 2: "Pos 3", 3: "Pos 4", 4: "Pos 5"}
     return positions.get(team_slot, f"Pos {team_slot+1}")
@@ -72,7 +72,7 @@ def get_items(p: dict) -> str:
     return ", ".join(i for i in items if i) or "—"
 
 
-def format_match_message(match: dict, platform: str = "telegram") -> str:
+async def format_match_message(match: dict, platform: str = "telegram") -> str:
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
     duration_sec = match.get("duration", 0) % 60
@@ -104,7 +104,14 @@ def format_match_message(match: dict, platform: str = "telegram") -> str:
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
             rank = get_rank(p.get("rank_tier"))
-            pos  = get_position(p)
+            # Пробуем AI позицию, фолбек на OpenDota
+            try:
+                from ai_advisor import get_player_position
+                pos = await get_player_position(hero, gpm, lh, get_items(p))
+                if pos == "?":
+                    pos = get_position_fallback(p)
+            except Exception:
+                pos = get_position_fallback(p)
 
             if platform == "discord":
                 discord_id = _ACCT_TO_DISCORD_ID.get(account_id)
