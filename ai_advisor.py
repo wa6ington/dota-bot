@@ -104,17 +104,17 @@ async def get_player_position(hero: str, gpm: int, lh: int, items: str) -> str:
         return "?"
 
     prompt = (
-        f"Ты эксперт по Dota 2. Определи позицию игрока (Pos 1/2/3/4/5) только по этим данным:\n"
+        f"Ты эксперт по Dota 2. Определи позицию игрока только по этим данным:\n"
         f"Герой: {hero}\n"
         f"GPM: {gpm}\n"
         f"Last Hits: {lh}\n"
         f"Предметы: {items}\n\n"
-        f"Ответь ТОЛЬКО одним из вариантов без объяснений:\n"
-        f"Pos 1 (Carry)\n"
-        f"Pos 2 (Mid)\n"
-        f"Pos 3 (Offlane)\n"
-        f"Pos 4 (Soft Support)\n"
-        f"Pos 5 (Hard Support)"
+        f"Ответь ТОЛЬКО одним из этих вариантов без объяснений:\n"
+        f"1 • Керри\n"
+        f"2 • Мидер\n"
+        f"3 • Оффлейнер\n"
+        f"4 • Роумер\n"
+        f"5 • Саппорт"
     )
 
     payload = {
