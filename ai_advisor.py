@@ -133,8 +133,20 @@ async def get_player_position(hero: str, gpm: int, lh: int, items: str) -> str:
                     return "?"
                 data = await r.json()
                 text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                # Берём только первую строку
-                return text.split("\n")[0].strip()
+                # Берём только первую строку и маппим на формат с числом
+                raw = text.split("\n")[0].strip()
+                mapping = {
+                    "керри": "1 • Керри",
+                    "мидер": "2 • Мидер",
+                    "оффлейнер": "3 • Оффлейнер",
+                    "роумер": "4 • Роумер",
+                    "саппорт": "5 • Саппорт",
+                    "легкая": "1 • Керри",
+                    "мид": "2 • Мидер",
+                    "сложная": "3 • Оффлейнер",
+                    "вне линии": "4 • Роумер",
+                }
+                return mapping.get(raw.lower(), raw)
     except Exception as e:
         logger.warning(f"Position detection error: {e}")
         return "?"
