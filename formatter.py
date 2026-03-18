@@ -55,15 +55,9 @@ def get_game_mode(game_mode: int, lobby_type: int) -> str:
         4: "Single Draft", 5: "All Random", 7: "Diretide", 8: "Reverse CM",
         11: "All Draft", 12: "Least Played", 16: "Captains Draft",
         17: "Balanced Draft", 18: "Ability Draft", 20: "All Random Deathmatch",
-        21: "1v1 Solo Mid", 22: "All Pick Ranked", 23: "Turbo", 24: "Mutation",
+        21: "1v1 Mid", 22: "Ranked", 23: "Turbo", 24: "Mutation",
     }
-    lobbies = {0: "Normal", 1: "Practice", 2: "Tournament",
-               5: "Team Match", 6: "Solo Queue", 7: "Ranked", 9: "1v1 Mid"}
-    mode  = modes.get(game_mode, f"Mode {game_mode}")
-    lobby = lobbies.get(lobby_type, "")
-    if lobby and lobby != "Normal":
-        return f"{mode} ({lobby})"
-    return mode
+    return modes.get(game_mode, f"Mode {game_mode}")
 
 
 def get_items(p: dict) -> str:
