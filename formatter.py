@@ -141,10 +141,17 @@ async def format_match_message(match: dict, platform: str = "telegram") -> str:
                 )
             our_players.append(name_tag)
         else:
+            items_str = get_items(p)
             if platform == "discord":
-                entry = f"  ? — **{hero}** ({kills}/{deaths}/{assists})"
+                entry = (
+                    f"  ? — **{hero}** ({kills}/{deaths}/{assists})\n"
+                    f"    🎒 {items_str}"
+                ) if items_str != "—" else f"  ? — **{hero}** ({kills}/{deaths}/{assists})"
             else:
-                entry = f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+                entry = (
+                    f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})\n"
+                    f"    🎒 {items_str}"
+                ) if items_str != "—" else f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
 
         if is_radiant:
             radiant.append(entry)

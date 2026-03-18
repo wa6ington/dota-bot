@@ -104,11 +104,13 @@ async def get_player_position(hero: str, gpm: int, lh: int, items: str) -> str:
         return "?"
 
     prompt = (
-        f"Ты эксперт по Dota 2. Определи позицию игрока только по этим данным:\n"
+        f"Ты эксперт по Dota 2. Определи позицию игрока ТОЛЬКО по статистике, не по герою.\n"
         f"Герой: {hero}\n"
-        f"GPM: {gpm}\n"
-        f"Last Hits: {lh}\n"
+        f"GPM: {gpm} (керри >600, мид >550, оффлейн >450, саппорт <400)\n"
+        f"Last Hits: {lh} (керри >200, мид >150, оффлейн >100, саппорт <80)\n"
         f"Предметы: {items}\n\n"
+        f"Саппортовые предметы: Glimmer Cape, Force Staff, Mekansm, Wards, Pipe, Lotus Orb\n"
+        f"Керри предметы: Battlefury, Manta, Butterfly, Mjollnir, Daedalus\n\n"
         f"Ответь ТОЛЬКО одним из этих вариантов без объяснений:\n"
         f"1 • Керри\n"
         f"2 • Мидер\n"
