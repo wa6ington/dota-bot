@@ -153,7 +153,7 @@ async def monitor_loop():
         if not match or count_our_players(match) < 2:
             return
 
-        msg = await format_match_message(match, platform="discord")
+        msg = format_match_message(match, platform="discord")
         if msg:
             reported_matches.add(mid)
             await channel.send(msg)
@@ -224,7 +224,7 @@ async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member
             await interaction.edit_original_response(content="❌ Не удалось получить детали матча.")
             return
 
-        result = await format_match_message(match, platform="discord")
+        result = format_match_message(match, platform="discord")
         if result:
             await interaction.edit_original_response(content=result)
         else:
@@ -251,7 +251,7 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
             await interaction.edit_original_response(content="❌ Матч не найден. Попробуй позже.")
             return
 
-        result = await format_match_message(match, platform="discord")
+        result = format_match_message(match, platform="discord")
         if result:
             await interaction.edit_original_response(content=result)
         else:

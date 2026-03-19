@@ -63,7 +63,7 @@ async def monitor_matches(app):
                     logger.info("Less than 2 our players, skipping")
                     continue
 
-                msg = await format_match_message(match)
+                msg = format_match_message(match)
                 if msg:
                     reported_matches.add(mid)
                     await app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=msg, parse_mode="HTML")

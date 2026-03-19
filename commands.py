@@ -190,7 +190,7 @@ async def cmd_lastmatch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not match:
             await update.message.reply_text("❌ Не удалось получить детали матча.")
             return
-        msg = await format_match_message(match)
+        msg = format_match_message(match)
         if msg:
             await update.message.reply_text(msg, parse_mode="HTML")
         else:
@@ -214,7 +214,7 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not match:
             await update.message.reply_text("❌ Матч не найден. Попробуй позже.")
             return
-        msg = await format_match_message(match)
+        msg = format_match_message(match)
         if msg:
             await update.message.reply_text(msg, parse_mode="HTML")
         else:

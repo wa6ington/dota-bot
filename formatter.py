@@ -79,7 +79,46 @@ def get_items(p: dict) -> str:
     return ", ".join(i for i in items if i) or "—"
 
 
-async def format_match_message(match: dict, platform: str = "telegram") -> str:
+
+SUPPORT_ITEMS = {
+    "Glimmer Cape", "Force Staff", "Mekansm", "Pipe of Insight",
+    "Lotus Orb", "Vladmir's Offering", "Arcane Boots", "Tranquil Boots",
+    "Observer and Sentry Wards", "Ghost Scepter", "Eul's Scepter of Divinity",
+    "Solar Crest", "Medallion of Courage", "Spirit Vessel"
+}
+CARRY_ITEMS = {
+    "Battle Fury", "Manta Style", "Butterfly", "Mjollnir", "Daedalus",
+    "Monkey King Bar", "Eye of Skadi", "Sange and Yasha", "Maelstrom",
+    "Mask of Madness", "Helm of the Dominator"
+}
+
+def detect_position(p: dict, items_str: str) -> str:
+    gpm = p.get("gold_per_min", 0)
+    lh  = p.get("last_hits", 0)
+
+    support_count = sum(1 for item in SUPPORT_ITEMS if item in items_str)
+    carry_count   = sum(1 for item in CARRY_ITEMS   if item in items_str)
+
+    # Явный саппорт
+    if support_count >= 2 or (gpm < 380 and lh < 60):
+        if gpm < 450:
+            return "5 • Саппорт"
+        return "4 • Роумер"
+
+    # Керри
+    if carry_count >= 1 or (lh > 250 and gpm > 600):
+        return "1 • Керри"
+
+    # По GPM/LH
+    if gpm > 550 and lh > 150:
+        return "2 • Мидер"
+    if gpm > 450:
+        return "3 • Оффлейнер"
+    if gpm > 380:
+        return "4 • Роумер"
+    return "5 • Саппорт"
+
+def format_match_message(match: dict, platform: str = "telegram") -> str:
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
     duration_sec = match.get("duration", 0) % 60
@@ -111,14 +150,7 @@ async def format_match_message(match: dict, platform: str = "telegram") -> str:
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
             rank = get_rank(p.get("rank_tier"))
-            # Пробуем AI позицию, фолбек на OpenDota
-            try:
-                from ai_advisor import get_player_position
-                pos = await get_player_position(hero, gpm, lh, get_items(p))
-                if pos == "?":
-                    pos = get_position_fallback(p)
-            except Exception:
-                pos = get_position_fallback(p)
+            pos = detect_position(p, get_items(p))
 
             if platform == "discord":
                 discord_id = _ACCT_TO_DISCORD_ID.get(account_id)
