@@ -152,3 +152,57 @@ async def get_player_position(hero: str, gpm: int, lh: int, items: str) -> str:
     except Exception as e:
         logger.warning(f"Position detection error: {e}")
         return "?"
+
+
+async def get_match_analysis(players_data: list[dict]) -> str:
+    """
+    Полный AI разбор матча — net worth сравнение + идеальные шмотки.
+    players_data — список наших игроков с данными.
+    """
+    import os
+    api_key = os.environ.get("GEMINI_API_KEY", GEMINI_API_KEY)
+    if not api_key:
+        return ""
+
+    duration_min = players_data[0].get("duration", 0) // 60 if players_data else 0
+
+    players_text = ""
+    for p in players_data:
+        players_text += (
+            f"- {p['name']} ({p['hero']}, {p['pos']}):\n"
+            f"  K/D/A: {p['kills']}/{p['deaths']}/{p['assists']}\n"
+            f"  GPM: {p['gpm']} | Net Worth: {p['net_worth']} gold\n"
+            f"  Last Hits: {p['lh']}\n"
+            f"  Предметы: {p['items']}\n\n"
+        )
+
+    prompt = (
+        f"Ты профессиональный Dota 2 тренер. Разбери матч длительностью {duration_min} минут.\n\n"
+        f"Наши игроки:\n{players_text}"
+        f"Для каждого игрока дай на русском:\n"
+        f"1. 💰 Net Worth: [реальный] (ожидалось ~[X] на {duration_min} мин для этой роли) — [оценка: норма/отставание/опережение]\n"
+        f"2. ✅/❌ Сборка: что собрал правильно, чего не хватало\n"
+        f"3. 🎒 Идеал: какие предметы надо было иметь к {duration_min} минуте\n\n"
+        f"Будь конкретным, кратким, на русском. Используй эмодзи."
+    )
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7}
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{GEMINI_URL}?key={api_key}",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as r:
+                if r.status != 200:
+                    logger.warning(f"Gemini API error: {r.status}")
+                    return ""
+                data = await r.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except Exception as e:
+        logger.warning(f"Match analysis error: {e}")
+        return ""

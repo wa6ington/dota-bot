@@ -4,6 +4,7 @@ import aiohttp
 
 from config import ALLOWED_CHAT_ID, HOST_ID, PLAYERS
 from steam import fetch_hero_names, fetch_item_names, get_last_match_id, get_match_details, request_parse, count_our_players
+import steam
 from formatter import format_match_message
 from ai_advisor import get_draft_advice, parse_draft
 
