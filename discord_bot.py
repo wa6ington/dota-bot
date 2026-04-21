@@ -12,7 +12,12 @@ import os
 from discord.ext import commands, tasks
 from discord import app_commands
 
-from config import DISCORD_TO_STEAM, DISCORD_USER_IDS, HOST_ID, PLAYERS
+from config import DS_ADMIN_IDS, HOST_ID
+from players_db import (
+    build_compat_dicts, get_all_players,
+    add_player, remove_player, clear_all_players,
+    format_players_list, resolve_steam_id
+)
 from commands import format_two_timezones
 from steam import (
     fetch_hero_names, fetch_item_names,
@@ -26,8 +31,7 @@ logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logg
 logger = logging.getLogger(__name__)
 
 DISCORD_TOKEN      = os.environ.get("DISCORD_TOKEN", "")
-DISCORD_CHANNEL_ID = 680782297162973263
-DISCORD_USERNAMES  = list(DISCORD_TO_STEAM.keys())
+DISCORD_CHANNEL_ID = int(os.environ.get("DISCORD_CHANNEL_ID", "680782297162973263"))
 
 reported_matches: set[str] = set()
 last_known_match: str | None = None
@@ -37,8 +41,26 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
+# ─── helpers ──────────────────────────────────────────────────────────────────
+
 def discord_players_list() -> str:
+    _, _, _, DISCORD_USER_IDS = build_compat_dicts()
+    if not DISCORD_USER_IDS:
+        return "_(нет игроков)_"
     return " ".join(f"<@{uid}>" for uid in DISCORD_USER_IDS.values())
+
+
+def is_ds_admin(interaction: discord.Interaction) -> bool:
+    """Проверяет права администратора Discord."""
+    user = interaction.user
+    # Явный список из конфига
+    if DS_ADMIN_IDS and user.id in DS_ADMIN_IDS:
+        return True
+    # Права manage_guild или administrator
+    if isinstance(user, discord.Member):
+        return user.guild_permissions.manage_guild or user.guild_permissions.administrator
+    return False
+
 
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
     delays = [5, 15, 30]
@@ -102,7 +124,7 @@ class VoteView(discord.ui.View):
         await interaction.response.edit_message(content=self.build_text(), view=self)
 
 
-# ─── события ─────────────────────────────────────────────────────────────────
+# ─── события ──────────────────────────────────────────────────────────────────
 
 @bot.event
 async def on_ready():
@@ -117,7 +139,7 @@ async def on_ready():
         logger.error(f"Sync error: {e}")
 
 
-# ─── мониторинг ──────────────────────────────────────────────────────────────
+# ─── мониторинг ───────────────────────────────────────────────────────────────
 
 @tasks.loop(minutes=2)
 async def monitor_loop():
@@ -126,11 +148,19 @@ async def monitor_loop():
     if not channel:
         return
 
+    # Получаем HOST из базы (первый игрок со steam_id)
+    players = get_all_players()
+    if not players:
+        return
+    host_steam_id = players[0].get("steam_id")
+    if not host_steam_id:
+        return
+
     async with aiohttp.ClientSession() as session:
         await fetch_hero_names(session)
         await fetch_item_names(session)
 
-        mid = await get_last_match_id(session, HOST_ID)
+        mid = await get_last_match_id(session, host_steam_id)
         if not mid:
             return
 
@@ -162,6 +192,7 @@ async def monitor_loop():
             # AI анализ драфта
             try:
                 from steam import HERO_NAMES
+                PLAYERS, _, _, _ = build_compat_dicts()
                 our_heroes, enemy_heroes = parse_draft(match, set(PLAYERS.values()), HERO_NAMES)
                 if our_heroes and enemy_heroes:
                     advice = await get_draft_advice(our_heroes, enemy_heroes)
@@ -171,12 +202,13 @@ async def monitor_loop():
                 logger.warning(f"Draft advice error: {e}")
 
 
-# ─── slash-команды ────────────────────────────────────────────────────────────
+# ─── slash-команды: игра ──────────────────────────────────────────────────────
 
 @bot.tree.command(name="dota", description="⚔️ Позвать всех прямо сейчас")
 async def slash_dota(interaction: discord.Interaction):
     view = VoteView(caller_name=interaction.user.display_name)
     await interaction.response.send_message(content=view.build_text(), view=view)
+
 
 @bot.tree.command(name="schedule", description="📅 Запланировать игру")
 @app_commands.describe(time="Например: 21:00 KZ или 19:00 MSK")
@@ -184,23 +216,25 @@ async def slash_schedule(interaction: discord.Interaction, time: str):
     formatted = format_two_timezones(time)
     if formatted is None:
         await interaction.response.send_message(
-            "❌ Неверный формат.\nПримеры: `21:00 kz` · `19:00 msk`",
-            ephemeral=True
+            "❌ Неверный формат.\nПримеры: `21:00 kz` · `19:00 msk`", ephemeral=True
         )
         return
     view = VoteView(caller_name=interaction.user.display_name, time_str=formatted)
     await interaction.response.send_message(content=view.build_text(), view=view)
 
+
 @bot.tree.command(name="lastmatch", description="🔍 Последний матч")
 @app_commands.describe(user="Упомяни игрока или оставь пустым для себя")
 async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member = None):
+    _, _, DISCORD_TO_STEAM, _ = build_compat_dicts()
     target   = user if user else interaction.user
     username = target.name.lower()
     steam_id = DISCORD_TO_STEAM.get(username)
 
     if not steam_id:
         await interaction.response.send_message(
-            f"❌ `{target.display_name}` не в списке.\nСписок: {', '.join(f'`{u}`' for u in DISCORD_USERNAMES)}",
+            f"❌ `{target.display_name}` не в списке.\n"
+            f"Список: {', '.join(f'`{u}`' for u in DISCORD_TO_STEAM.keys())}",
             ephemeral=True
         )
         return
@@ -230,6 +264,7 @@ async def slash_lastmatch(interaction: discord.Interaction, user: discord.Member
         else:
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
+
 @bot.tree.command(name="analyze", description="🔎 Анализ матча по ID")
 @app_commands.describe(match_id="ID матча, например: 8726314725")
 async def slash_analyze(interaction: discord.Interaction, match_id: str):
@@ -257,6 +292,7 @@ async def slash_analyze(interaction: discord.Interaction, match_id: str):
         else:
             await interaction.edit_original_response(content="😕 Не удалось сформировать сообщение.")
 
+
 @bot.tree.command(name="draft", description="🧠 AI анализ драфта врагов")
 @app_commands.describe(heroes="Герои врагов через пробел: invoker storm pudge")
 async def slash_draft(interaction: discord.Interaction, heroes: str):
@@ -270,26 +306,109 @@ async def slash_draft(interaction: discord.Interaction, heroes: str):
     else:
         await interaction.edit_original_response(content="❌ Не удалось получить анализ.")
 
+
 @bot.tree.command(name="roulette", description="🎰 Кто аутист?")
 async def slash_roulette(interaction: discord.Interaction):
+    _, _, _, DISCORD_USER_IDS = build_compat_dicts()
+    if not DISCORD_USER_IDS:
+        await interaction.response.send_message("👥 Нет игроков в базе!")
+        return
     uid = random.choice(list(DISCORD_USER_IDS.values()))
     await interaction.response.send_message(f"🎰 Рулетка крутится...\n\n🤡 **Аутист дня:** <@{uid}>")
 
+
 @bot.tree.command(name="players", description="👥 Список игроков")
 async def slash_players(interaction: discord.Interaction):
-    lines = "\n".join(f"{i+1}. <@{uid}>" for i, uid in enumerate(DISCORD_USER_IDS.values()))
-    await interaction.response.send_message(f"🎮 **Игроки:**\n{lines}")
+    await interaction.response.send_message(format_players_list("discord"))
+
+
+# ─── slash-команды: управление игроками ──────────────────────────────────────
+
+@bot.tree.command(name="addplayer", description="➕ Добавить игрока (только админы)")
+@app_commands.describe(
+    tg_nick="Telegram ник без @ (или '-' если нет)",
+    ds_nick="Discord ник без @ (или '-' если нет)",
+    steam="SteamID64, vanity-ник или ссылка на профиль"
+)
+async def slash_addplayer(
+    interaction: discord.Interaction,
+    tg_nick: str,
+    ds_nick: str,
+    steam: str
+):
+    if not is_ds_admin(interaction):
+        await interaction.response.send_message("⛔ Только администраторы могут управлять игроками.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("🔍 Проверяю Steam профиль...")
+
+    tg_username = None if tg_nick.strip("-") == "" or tg_nick == "-" else tg_nick.lstrip("@")
+    ds_username = None if ds_nick.strip("-") == "" or ds_nick == "-" else ds_nick.lstrip("@")
+
+    if not tg_username and not ds_username:
+        await interaction.edit_original_response(content="❌ Укажи хотя бы один ник (TG или DS).")
+        return
+
+    steam_id, err = await resolve_steam_id(steam)
+    if not steam_id:
+        await interaction.edit_original_response(content=err)
+        return
+
+    # Пытаемся получить Discord user ID автоматически
+    ds_user_id = None
+    if ds_username:
+        # Ищем участника на сервере по username
+        guild = interaction.guild
+        if guild:
+            member = discord.utils.find(
+                lambda m: m.name.lower() == ds_username.lower(),
+                guild.members
+            )
+            if member:
+                ds_user_id = member.id
+
+    ok, msg = add_player(tg_username, ds_username, ds_user_id, steam_id)
+    await interaction.edit_original_response(content=msg)
+
+
+@bot.tree.command(name="removeplayer", description="➖ Удалить игрока (только админы)")
+@app_commands.describe(identifier="TG-ник, DS-ник или SteamID64")
+async def slash_removeplayer(interaction: discord.Interaction, identifier: str):
+    if not is_ds_admin(interaction):
+        await interaction.response.send_message("⛔ Только администраторы могут управлять игроками.", ephemeral=True)
+        return
+
+    ok, msg = remove_player(identifier)
+    await interaction.response.send_message(msg)
+
+
+@bot.tree.command(name="clearplayers", description="🗑 Очистить всю базу игроков (только админы)")
+async def slash_clearplayers(interaction: discord.Interaction):
+    if not is_ds_admin(interaction):
+        await interaction.response.send_message("⛔ Только администраторы могут управлять игроками.", ephemeral=True)
+        return
+
+    ok, msg = clear_all_players()
+    await interaction.response.send_message(msg)
+
 
 @bot.tree.command(name="помощь", description="📋 Список команд")
 async def slash_help(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🎮 **Dota 2 Bot**\n\n"
+        "**Игра:**\n"
         "`/dota` — Позвать всех прямо сейчас\n"
         "`/schedule 21:00 KZ` — Запланировать игру (указать пояс КЗ/МСК)\n"
         "`/lastmatch [игрок]` — Упомяни игрока или оставь пустым для себя\n"
         "`/analyze ID` — Разбор любого матча\n"
         "`/draft invoker storm` — AI анализ драфта\n"
         "`/roulette` — Кто аутист?\n"
-        "`/players` — Список игроков",
+        "`/players` — Список игроков\n\n"
+        "**Управление игроками (только админы):**\n"
+        "`/addplayer tg_ник ds_ник steam` — Добавить игрока\n"
+        "  Steam: SteamID64, vanity-ник или ссылка\n"
+        "  Нет TG/DS → введи `-`\n"
+        "`/removeplayer ник_или_steamID` — Удалить игрока\n"
+        "`/clearplayers` — Очистить всю базу",
         ephemeral=True
     )

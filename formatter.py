@@ -1,18 +1,22 @@
 import steam
 import asyncio
-from config import PLAYERS, DISCORD_TO_STEAM, DISCORD_USER_IDS
+from players_db import build_compat_dicts
 from datetime import datetime, timezone, timedelta
 
 TZ_MSK    = timezone(timedelta(hours=3))
 TZ_ALMATY = timezone(timedelta(hours=5))
 
-# steam account_id -> discord user id
-_ACCT_TO_DISCORD_ID: dict[int, int] = {}
-for _dc_username, _steam_id in DISCORD_TO_STEAM.items():
-    _acct = int(_steam_id) - 76561197960265728
-    _uid  = DISCORD_USER_IDS.get(_dc_username)
-    if _uid:
-        _ACCT_TO_DISCORD_ID[_acct] = _uid
+
+def _get_acct_to_discord_id() -> dict[int, int]:
+    """Строит маппинг account_id -> discord_user_id из текущей базы."""
+    _, _, DISCORD_TO_STEAM, DISCORD_USER_IDS = build_compat_dicts()
+    result = {}
+    for ds_username, steam_id in DISCORD_TO_STEAM.items():
+        acct = int(steam_id) - 76561197960265728
+        uid  = DISCORD_USER_IDS.get(ds_username)
+        if uid:
+            result[acct] = uid
+    return result
 
 
 def format_start_time(start_time: int) -> str:
@@ -37,7 +41,6 @@ def get_rank(rank_tier) -> str:
 
 
 def get_position_fallback(p: dict) -> str:
-    """Фолбек позиция по lane_role от OpenDota."""
     if p.get("is_roaming"):
         return "Роумер"
     mapping = {1: "Легкая", 2: "Мид", 3: "Сложная", 4: "Вне линии"}
@@ -51,24 +54,11 @@ def get_position_fallback(p: dict) -> str:
 
 def get_game_mode(game_mode: int, lobby_type: int) -> str:
     modes = {
-        0: "Unknown",
-        1: "All Pick",
-        2: "Captain's Mode",
-        3: "Random Draft",
-        4: "Single Draft",
-        5: "All Random",
-        7: "Diretide",
-        8: "Reverse CM",
-        11: "All Draft",
-        12: "Least Played",
-        16: "Captains Draft",
-        17: "Balanced Draft",
-        18: "Ability Draft",
-        20: "All Random Deathmatch",
-        21: "1v1 Mid",
-        22: "All Pick Ranked",
-        23: "Turbo",
-        24: "Mutation",
+        0: "Unknown", 1: "All Pick", 2: "Captain's Mode", 3: "Random Draft",
+        4: "Single Draft", 5: "All Random", 7: "Diretide", 8: "Reverse CM",
+        11: "All Draft", 12: "Least Played", 16: "Captains Draft",
+        17: "Balanced Draft", 18: "Ability Draft", 20: "All Random Deathmatch",
+        21: "1v1 Mid", 22: "All Pick Ranked", 23: "Turbo", 24: "Mutation",
     }
     return modes.get(game_mode, f"Mode {game_mode}")
 
@@ -77,7 +67,6 @@ def get_items(p: dict) -> str:
     slots = ["item_0", "item_1", "item_2", "item_3", "item_4", "item_5"]
     items = [steam.ITEM_NAMES.get(p.get(s, 0), "") for s in slots if p.get(s, 0)]
     return ", ".join(i for i in items if i) or "—"
-
 
 
 SUPPORT_ITEMS = {
@@ -92,6 +81,7 @@ CARRY_ITEMS = {
     "Mask of Madness", "Helm of the Dominator"
 }
 
+
 def detect_position(p: dict, items_str: str) -> str:
     gpm = p.get("gold_per_min", 0)
     lh  = p.get("last_hits", 0)
@@ -99,17 +89,14 @@ def detect_position(p: dict, items_str: str) -> str:
     support_count = sum(1 for item in SUPPORT_ITEMS if item in items_str)
     carry_count   = sum(1 for item in CARRY_ITEMS   if item in items_str)
 
-    # Явный саппорт
     if support_count >= 2 or (gpm < 380 and lh < 60):
         if gpm < 450:
             return "5 • Саппорт"
         return "4 • Роумер"
 
-    # Керри
     if carry_count >= 1 or (lh > 250 and gpm > 600):
         return "1 • Керри"
 
-    # По GPM/LH
     if gpm > 550 and lh > 150:
         return "2 • Мидер"
     if gpm > 450:
@@ -118,12 +105,16 @@ def detect_position(p: dict, items_str: str) -> str:
         return "4 • Роумер"
     return "5 • Саппорт"
 
+
 def format_match_message(match: dict, platform: str = "telegram") -> str:
+    PLAYERS, _, _, _ = build_compat_dicts()
+    acct_to_tg       = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
+    acct_to_discord  = _get_acct_to_discord_id()
+
     players_data = match.get("players", [])
     duration_min = match.get("duration", 0) // 60
     duration_sec = match.get("duration", 0) % 60
     radiant_win  = match.get("radiant_win", False)
-    acct_to_tg   = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
 
     radiant = []
     dire    = []
@@ -150,10 +141,10 @@ def format_match_message(match: dict, platform: str = "telegram") -> str:
             if our_team_radiant is None:
                 our_team_radiant = is_radiant
             rank = get_rank(p.get("rank_tier"))
-            pos = detect_position(p, get_items(p))
+            pos  = detect_position(p, get_items(p))
 
             if platform == "discord":
-                discord_id = _ACCT_TO_DISCORD_ID.get(account_id)
+                discord_id = acct_to_discord.get(account_id)
                 name_tag   = f"<@{discord_id}>" if discord_id else f"@{tg_name}"
                 entry = (
                     f"  {name_tag} — **{hero}**\n"
@@ -173,17 +164,18 @@ def format_match_message(match: dict, platform: str = "telegram") -> str:
                 )
             our_players.append(name_tag)
         else:
-            items_str = get_items(p)
             if platform == "discord":
                 entry = (
-                    f"  ? — **{hero}** ({kills}/{deaths}/{assists})\n"
-                    f"    🎒 {items_str}"
-                ) if items_str != "—" else f"  ? — **{hero}** ({kills}/{deaths}/{assists})"
+                    f"  ? — **{hero}** ({kills}/{deaths}/{assists})\n    🎒 {items_str}"
+                    if items_str != "—" else
+                    f"  ? — **{hero}** ({kills}/{deaths}/{assists})"
+                )
             else:
                 entry = (
-                    f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})\n"
-                    f"    🎒 {items_str}"
-                ) if items_str != "—" else f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+                    f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})\n    🎒 {items_str}"
+                    if items_str != "—" else
+                    f"  ? — <b>{hero}</b> ({kills}/{deaths}/{assists})"
+                )
 
         if is_radiant:
             radiant.append(entry)

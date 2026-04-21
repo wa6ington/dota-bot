@@ -1,6 +1,7 @@
 import logging
 import aiohttp
-from config import STEAM_API_KEY, PLAYERS
+from config import STEAM_API_KEY
+from players_db import build_compat_dicts
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,6 @@ async def get_last_match_id(session: aiohttp.ClientSession, steam_id: str) -> st
 
 
 async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> dict | None:
-    # OpenDota первым — там есть предметы и статы
     try:
         async with session.get(f"https://api.opendota.com/api/matches/{match_id}", timeout=aiohttp.ClientTimeout(total=15)) as r:
             if r.status == 200:
@@ -62,7 +62,6 @@ async def get_match_details(session: aiohttp.ClientSession, match_id: str) -> di
                     return data
     except Exception as e:
         logger.warning(f"OpenDota match details error: {e}")
-    # Steam API fallback
     try:
         url = f"https://api.steampowered.com/IDOTA2Match_570/GetMatchDetails/v1/?key={STEAM_API_KEY}&match_id={match_id}"
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
@@ -85,6 +84,7 @@ async def request_parse(session: aiohttp.ClientSession, match_id: str):
 
 
 def count_our_players(match: dict) -> int:
+    PLAYERS, _, _, _ = build_compat_dicts()
     acct_to_tg = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
     count = 0
     for p in match.get("players", []):

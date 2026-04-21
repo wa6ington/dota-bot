@@ -3,7 +3,8 @@ import asyncio
 import aiohttp
 import steam
 
-from config import ALLOWED_CHAT_ID, HOST_ID, PLAYERS
+from config import ALLOWED_CHAT_ID
+from players_db import build_compat_dicts, get_all_players
 from steam import fetch_hero_names, fetch_item_names, get_last_match_id, get_match_details, request_parse, count_our_players
 from formatter import format_match_message, detect_position
 from ai_advisor import get_match_analysis
@@ -22,14 +23,31 @@ async def monitor_matches(app):
         await fetch_hero_names(session)
         await fetch_item_names(session)
 
-        last_known_match = await get_last_match_id(session, HOST_ID)
-        logger.info(f"Monitor started. Last match: {last_known_match}")
+        # HOST — первый игрок в базе с steam_id
+        players = get_all_players()
+        if not players:
+            logger.warning("Monitor: no players in DB, waiting...")
+            while True:
+                await asyncio.sleep(60)
+                players = get_all_players()
+                if players:
+                    break
+
+        host_steam_id = players[0].get("steam_id")
+        last_known_match = await get_last_match_id(session, host_steam_id)
+        logger.info(f"Monitor started. Host: {host_steam_id} Last match: {last_known_match}")
 
         while True:
             try:
                 await asyncio.sleep(120)
 
-                mid = await get_last_match_id(session, HOST_ID)
+                # Перечитываем базу на каждой итерации (могли добавить игроков)
+                players = get_all_players()
+                if not players:
+                    continue
+                host_steam_id = players[0].get("steam_id")
+
+                mid = await get_last_match_id(session, host_steam_id)
                 if not mid or mid == last_known_match or mid in reported_matches:
                     logger.info(f"No new match (last={mid})")
                     continue
@@ -39,7 +57,6 @@ async def monitor_matches(app):
 
                 await request_parse(session, mid)
 
-                # Умное ожидание
                 match = None
                 for delay in [5, 15, 30, 60]:
                     await asyncio.sleep(delay)
@@ -64,15 +81,15 @@ async def monitor_matches(app):
                     logger.info("Less than 2 our players, skipping")
                     continue
 
-                # Отправляем результат матча
                 msg = format_match_message(match)
                 if msg:
                     reported_matches.add(mid)
                     await app.bot.send_message(chat_id=ALLOWED_CHAT_ID, text=msg, parse_mode="HTML")
                     logger.info(f"Reported match {mid}")
 
-                # AI полный разбор матча
+                # AI разбор матча
                 try:
+                    PLAYERS, _, _, _ = build_compat_dicts()
                     acct_to_tg = {int(v) - 76561197960265728: k for k, v in PLAYERS.items()}
                     our_players_data = []
 
@@ -113,8 +130,7 @@ async def monitor_matches(app):
                                 parse_mode="HTML"
                             )
                             logger.info("AI analysis sent")
-                        else:
-                            logger.warning("AI analysis returned empty")
+
                 except Exception as e:
                     logger.error(f"Match analysis error: {e}")
 

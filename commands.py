@@ -6,7 +6,12 @@ import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from config import ALLOWED_CHAT_ID, PLAYERS, DEFAULT_TAGS, TG_TO_STEAM
+from config import ALLOWED_CHAT_ID, TG_ADMIN_IDS
+from players_db import (
+    get_all_players, build_compat_dicts,
+    add_player, remove_player, clear_all_players,
+    format_players_list, resolve_steam_id, get_by_tg
+)
 from steam import fetch_hero_names, fetch_item_names, get_last_match_id, get_match_details, request_parse
 from formatter import format_match_message
 
@@ -15,7 +20,7 @@ logger = logging.getLogger(__name__)
 sessions: dict[int, dict] = {}
 
 
-# ─── timezone helpers ────────────────────────────────────────────────────────
+# ─── timezone helpers ─────────────────────────────────────────────────────────
 
 def format_two_timezones(time_str: str) -> str | None:
     MSK_ALIASES = {"msk", "мск", "москва", "moscow"}
@@ -50,10 +55,27 @@ def format_two_timezones(time_str: str) -> str | None:
         return None
 
 
-# ─── helpers ─────────────────────────────────────────────────────────────────
+# ─── helpers ──────────────────────────────────────────────────────────────────
 
 async def group_only(update: Update) -> bool:
     return update.effective_chat.id == ALLOWED_CHAT_ID
+
+
+async def is_tg_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Проверяет, является ли пользователь администратором группы."""
+    user = update.effective_user
+    if not user:
+        return False
+    # Явный список TG_ADMIN_IDS из конфига
+    if TG_ADMIN_IDS and user.id in TG_ADMIN_IDS:
+        return True
+    # Иначе проверяем права в чате
+    try:
+        member = await context.bot.get_chat_member(update.effective_chat.id, user.id)
+        return member.status in ("administrator", "creator")
+    except Exception:
+        return False
+
 
 async def wait_for_match(session, match_id: str, send_status) -> dict | None:
     delays = [5, 15, 30]
@@ -71,8 +93,11 @@ async def wait_for_match(session, match_id: str, send_status) -> dict | None:
             return match
     return await get_match_details(session, match_id)
 
+
 def all_mentions() -> str:
-    return " ".join(f"@{u}" for u in DEFAULT_TAGS)
+    PLAYERS, _, _, _ = build_compat_dicts()
+    return " ".join(f"@{u}" for u in PLAYERS.keys())
+
 
 def session_text(session: dict) -> str:
     time_str  = f" в <b>{session['time']}</b>" if session.get("time") else ""
@@ -85,6 +110,7 @@ def session_text(session: dict) -> str:
         f"❌ {len(no_names)}  —  {', '.join(no_names) or '—'}"
     )
 
+
 def vote_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Иду!", callback_data="vote_yes"),
@@ -92,12 +118,14 @@ def vote_kb() -> InlineKeyboardMarkup:
     ]])
 
 
-# ─── команды ─────────────────────────────────────────────────────────────────
+# ─── базовые команды ──────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
+    if not await group_only(update):
+        return
     await update.message.reply_text(
         "🎮 <b>Dota 2 Bot</b>\n\n"
+        "<b>Игра:</b>\n"
         "/dota — Позвать всех прямо сейчас\n"
         "/schedule 21:00 KZ — Запланировать игру (указать пояс КЗ/МСК)\n"
         "/lastmatch [игрок] — Упомяни игрока или оставь пустым для себя\n"
@@ -105,17 +133,143 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
         "/draft invoker storm — AI анализ драфта\n"
         "/roulette — Кто аутист?\n"
         "/players — Список игроков\n"
-        "/cancel — Отменить сессию",
+        "/cancel — Отменить сессию\n\n"
+        "<b>Управление игроками (только админы):</b>\n"
+        "/addplayer @tg-ник @ds-ник steam/ссылка — Добавить игрока\n"
+        "/removeplayer @ник или steamID — Удалить игрока\n"
+        "/clearplayers — Очистить всю базу",
         parse_mode="HTML",
     )
 
+
 async def cmd_players(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
-    lines = "\n".join(f"{i+1}. @{u}" for i, u in enumerate(DEFAULT_TAGS))
-    await update.message.reply_text(f"🎮 <b>Игроки:</b>\n{lines}", parse_mode="HTML")
+    if not await group_only(update):
+        return
+    await update.message.reply_text(format_players_list("telegram"), parse_mode="HTML")
+
+
+# ─── управление игроками ──────────────────────────────────────────────────────
+
+async def cmd_addplayer(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    /addplayer @tg-ник @ds-ник steamID_или_ссылка
+    /addplayer @tg-ник - steamID_или_ссылка       (нет DS аккаунта)
+    /addplayer - @ds-ник steamID_или_ссылка        (нет TG аккаунта)
+
+    Steam можно передавать в любом виде:
+      76561198312814207
+      steamcommunity.com/id/wa6ingtonn
+      steamcommunity.com/profiles/76561198312814207
+      wa6ingtonn  (vanity имя)
+    """
+    if not await group_only(update):
+        return
+    if not await is_tg_admin(update, ctx):
+        await update.message.reply_text("⛔ Только администраторы могут управлять игроками.")
+        return
+
+    args = ctx.args
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "❌ Использование:\n"
+            "<code>/addplayer @tg_ник @ds_ник steamID_или_ссылка</code>\n"
+            "<code>/addplayer @tg_ник - steamID</code>  (без DS)\n"
+            "<code>/addplayer - @ds_ник steamID</code>  (без TG)\n\n"
+            "Steam можно указывать как:\n"
+            "• SteamID64: <code>76561198312814207</code>\n"
+            "• Vanity-ник: <code>wa6ingtonn</code>\n"
+            "• Ссылку: <code>steamcommunity.com/id/wa6ingtonn</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    # Парсинг аргументов
+    tg_arg  = args[0] if len(args) >= 1 else "-"
+    ds_arg  = args[1] if len(args) >= 2 else "-"
+    steam_arg = " ".join(args[2:]) if len(args) >= 3 else ""
+
+    if not steam_arg:
+        await update.message.reply_text("❌ Не указан Steam ID или ссылка на профиль.")
+        return
+
+    tg_username = None if tg_arg == "-" else tg_arg.lstrip("@")
+    ds_username = None if ds_arg == "-" else ds_arg.lstrip("@")
+
+    if not tg_username and not ds_username:
+        await update.message.reply_text("❌ Укажи хотя бы один ник (TG или DS).")
+        return
+
+    # Резолвим Steam ID
+    await update.message.reply_text("🔍 Проверяю Steam профиль...")
+    steam_id, err = await resolve_steam_id(steam_arg)
+    if not steam_id:
+        await update.message.reply_text(err)
+        return
+
+    ok, msg = add_player(tg_username, ds_username, None, steam_id)
+    await update.message.reply_text(msg, parse_mode="HTML")
+
+
+async def cmd_removeplayer(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    /removeplayer @tg-ник
+    /removeplayer @ds-ник
+    /removeplayer 76561198312814207
+    """
+    if not await group_only(update):
+        return
+    if not await is_tg_admin(update, ctx):
+        await update.message.reply_text("⛔ Только администраторы могут управлять игроками.")
+        return
+
+    if not ctx.args:
+        await update.message.reply_text(
+            "❌ Использование: <code>/removeplayer @ник_или_steamID</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    identifier = ctx.args[0]
+    ok, msg = remove_player(identifier)
+    await update.message.reply_text(msg, parse_mode="HTML")
+
+
+async def cmd_clearplayers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Очищает всю базу игроков. Требует подтверждения."""
+    if not await group_only(update):
+        return
+    if not await is_tg_admin(update, ctx):
+        await update.message.reply_text("⛔ Только администраторы могут управлять игроками.")
+        return
+
+    # Требуем подтверждение
+    confirm_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Да, очистить", callback_data="confirm_clear"),
+        InlineKeyboardButton("❌ Отмена", callback_data="cancel_clear"),
+    ]])
+    await update.message.reply_text(
+        "⚠️ <b>Вы уверены?</b> Это удалит всех игроков из базы данных.",
+        parse_mode="HTML",
+        reply_markup=confirm_kb
+    )
+
+
+async def on_clear_confirm(update: Update, _: ContextTypes.DEFAULT_TYPE):
+    """Обработчик подтверждения очистки базы."""
+    query = update.callback_query
+    await query.answer()
+    if query.data == "confirm_clear":
+        ok, msg = clear_all_players()
+        await query.edit_message_text(msg)
+    else:
+        await query.edit_message_text("❌ Отменено.")
+
+
+# ─── сессии ───────────────────────────────────────────────────────────────────
 
 async def _start_session(update: Update, time_str: str | None):
-    if not await group_only(update): return
+    if not await group_only(update):
+        return
     chat_id = update.effective_chat.id
     caller  = update.effective_user
     sessions[chat_id] = {
@@ -130,8 +284,10 @@ async def _start_session(update: Update, time_str: str | None):
     await update.message.reply_text(all_mentions())
     await update.message.reply_text(session_text(sessions[chat_id]), parse_mode="HTML", reply_markup=vote_kb())
 
+
 async def cmd_dota(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await _start_session(update, None)
+
 
 async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     raw = " ".join(ctx.args) if ctx.args else None
@@ -140,12 +296,16 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     time_str = format_two_timezones(raw)
     if time_str is None:
-        await update.message.reply_text("❌ Неверный формат.\nПримеры: /schedule 21:00 kz · /schedule 19:00 msk · /schedule 21 00 кз")
+        await update.message.reply_text(
+            "❌ Неверный формат.\nПримеры: /schedule 21:00 kz · /schedule 19:00 msk"
+        )
         return
     await _start_session(update, time_str)
 
+
 async def cmd_cancel(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
+    if not await group_only(update):
+        return
     chat_id = update.effective_chat.id
     if chat_id in sessions:
         sessions.pop(chat_id)
@@ -153,16 +313,30 @@ async def cmd_cancel(update: Update, _: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Нет активной сессии.")
 
+
 async def cmd_roulette(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
-    victim = "@" + random.choice(DEFAULT_TAGS)
+    if not await group_only(update):
+        return
+    PLAYERS, _, _, _ = build_compat_dicts()
+    tags = list(PLAYERS.keys())
+    if not tags:
+        await update.message.reply_text("👥 Нет игроков в базе!")
+        return
+    victim = "@" + random.choice(tags)
     await update.message.reply_text(
         f"🎰 Рулетка крутится...\n\n🤡 <b>Аутист дня:</b> {victim}",
         parse_mode="HTML",
     )
 
+
+# ─── матчи ────────────────────────────────────────────────────────────────────
+
 async def cmd_lastmatch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
+    if not await group_only(update):
+        return
+
+    PLAYERS, TG_TO_STEAM, _, _ = build_compat_dicts()
+
     if ctx.args:
         target_name = ctx.args[0].lstrip("@").lower()
     else:
@@ -196,8 +370,10 @@ async def cmd_lastmatch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("😕 Не удалось сформировать сообщение.")
 
+
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
+    if not await group_only(update):
+        return
     if not ctx.args:
         await update.message.reply_text("Использование: /analyze 8726314725")
         return
@@ -220,10 +396,14 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("😕 Не удалось сформировать сообщение.")
 
+
 async def cmd_draft(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not await group_only(update): return
+    if not await group_only(update):
+        return
     if not ctx.args:
-        await update.message.reply_text("Использование: /draft invoker storm pudge\nВведи героев врагов через пробел")
+        await update.message.reply_text(
+            "Использование: /draft invoker storm pudge\nВведи героев врагов через пробел"
+        )
         return
     enemy_heroes = [h.capitalize() for h in ctx.args]
     await update.message.reply_text(f"🧠 Анализирую драфт против: {', '.join(enemy_heroes)}...")
@@ -237,10 +417,14 @@ async def cmd_draft(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Не удалось получить анализ. Попробуй позже.")
 
+
+# ─── callback handlers ────────────────────────────────────────────────────────
+
 async def on_vote(update: Update, _: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if update.effective_chat.type not in ("group", "supergroup"): return
+    if update.effective_chat.type not in ("group", "supergroup"):
+        return
     chat_id = update.effective_chat.id
     user    = update.effective_user
     session = sessions.get(chat_id)
